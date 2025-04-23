@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MEI 音符・休符作成</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" />
+    <style>
+        .rhythm-list {
+            list-style: none;
+            padding: 0;
+            margin-top: 20px;
+        }
+
+        .rhythm-list li {
+            display: flex;
+            flex-direction: column;
+            /* 上から順に：編集→音高→オプション→削除 */
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .rhythm-list li>.card-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .edit-controls,
+        .pitch-controls,
+        .option-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .btn-group {
+            display: flex;
+            justify-content: space-between;
+            /* ボタン間に均等なスペース */
+            /* justify-content: space-around; /* ボタンの左右と間にも均等なスペースを入れたい場合 */
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container mt-3">
+        <h1>MEI 音符・休符作成</h1>
+
+        <!-- プリセットボタン群 -->
+        <div id="rhythm-presets" class="mb-3">
+            <h2>リズムプリセット</h2>
+            <div class="btn-group">
+                <button class="btn btn-outline-primary" data-dur="16">note<br>16</button>
+                <button class="btn btn-outline-primary" data-dur="8">note<br>8</button>
+                <button class="btn btn-outline-primary" data-dur="4">note<br>4</button>
+                <button class="btn btn-outline-primary" data-dur="2">note<br>2</button>
+                <button class="btn btn-outline-primary" data-dur="1">note<br>1</button>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-outline-success" data-rest="true" data-dur="16">rest<br>16</button>
+                <button class="btn btn-outline-success" data-rest="true" data-dur="8">rest<br>8</button>
+                <button class="btn btn-outline-success" data-rest="true" data-dur="4">rest<br>4</button>
+                <button class="btn btn-outline-success" data-rest="true" data-dur="2">rest<br>2</button>
+                <button class="btn btn-outline-success" data-rest="true" data-dur="1">rest<br>1</button>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-outline-primary" data-dur="16" data-dots="1">note<br>16.</button>
+                <button class="btn btn-outline-primary" data-dur="8" data-dots="1">note<br>8.</button>
+                <button class="btn btn-outline-primary" data-dur="4" data-dots="1">note<br>4.</button>
+                <button class="btn btn-outline-primary" data-dur="2" data-dots="1">note<br>2.</button>
+                <button class="btn btn-outline-primary" data-dur="1" data-dots="1">note<br>1.</button>
+            </div>
+
+        </div>
+
+        <!-- 入力済みリスト -->
+        <div id="rhythm-input-area" class="mb-3">
+            <h2>リズム入力</h2>
+            <button id="clear-rhythm" class="btn btn-warning mt-2">リズム入力クリア</button>
+            <ul id="rhythm-list" class="rhythm-list"></ul>
+            
+        </div>
+
+        <!-- MEI 出力 -->
+        <div id="mei-output" class="mb-3">
+            <h2>MEI出力</h2>
+            <textarea id="mei-text" class="form-control" rows="10"></textarea>
+            <div class="mt-2">
+                <button id="output-mei" class="btn btn-primary">MEI出力</button>
+                <button id="clear-output" class="btn btn-danger">出力クリア</button>
+                <button id="copy-output" class="btn btn-info">コピー</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ── DOM 要素取得 ─────────────────────────
+        const rhythmPresets = document.getElementById('rhythm-presets');
+        const rhythmList = document.getElementById('rhythm-list');
+        const outputMeiBtn = document.getElementById('output-mei');
+        const meiTextarea = document.getElementById('mei-text');
+        const clearOutputBtn = document.getElementById('clear-output');
+        const copyOutputBtn = document.getElementById('copy-output');
+        const clearRhythmBtn = document.getElementById('clear-rhythm');
+
+        // ── データ構造 ───────────────────────────
+        // 各要素に一意な id を割り振るためのカウンタ
+        let idCounter = 0;
+        // 入力アイテムを保持する配列
+        let rhythmItems = [];
+
+        // 音高選択用データ
+        const basePitches = ["c", "d", "e", "f", "g", "a", "b"];
+        const accidentals = [["", "♮"], ["s", "♯"], ["f", "♭"]];
+        const octaves = ["3", "4", "5"];
+
+        // ── プリセットボタン押下時 ─────────────────
+        rhythmPresets.addEventListener('click', e => {
+            if (e.target.tagName !== 'BUTTON') return;
+
+            // 新アイテムの基本情報を取得
+            const dur = e.target.dataset.dur;
+            const dots = e.target.dataset.dots === "1";
+            const rest = e.target.dataset.rest === "true";
+
+            // 一意 id を発行
+            const itemId = idCounter++;
+
+            // データ配列に追加（初期値）
+            rhythmItems.push({
+                id: itemId,
+                dur, dots, rest,
+                pname: "", accid: "", oct: "4",
+                beamBefore: false,
+                beamAfter: false,
+                tieI: false,
+                tieT: false
+            });
+
+            // 画面にカードを描画
+            renderCard(itemId);
+        });
+
+        // ── カード描画関数 ────────────────────────
+        function renderCard(itemId) {
+            // 該当アイテムを取得
+            const item = rhythmItems.find(x => x.id === itemId);
+            if (!item) return;
+
+            // li 要素を作成
+            const li = document.createElement('li');
+            li.dataset.id = itemId;
+
+            // 1) カードタイトル（現在の設定を表示）
+            const title = document.createElement('div');
+            title.classList.add('card-title');
+            updateTitleText(title, item);
+            li.appendChild(title);
+
+            // 2) 編集用コントロール群（休符/長さ/付点）
+            const editDiv = document.createElement('div');
+            editDiv.classList.add('edit-controls');
+
+            // 休符トグル
+            const restLbl = document.createElement('label');
+            restLbl.classList.add('form-check', 'form-check-inline');
+            restLbl.innerHTML = `
+                <input class="form-check-input rest-toggle" type="checkbox"
+                    ${item.rest ? 'checked' : ''}>
+                <span class="form-check-label">休符</span>
+            `;
+            editDiv.appendChild(restLbl);
+
+            // 長さセレクト
+            const durLbl = document.createElement('label');
+            durLbl.classList.add('form-inline');
+            durLbl.innerHTML = `
+                <span class="mr-2">長さ:</span>
+                <select class="form-control form-control-sm dur-select">
+                <option value="2">二分</option>
+                <option value="4">四分</option>
+                <option value="8">八分</option>
+                <option value="16">十六分</option>
+                </select>
+            `;
+            // 初期値
+            durLbl.querySelector('select').value = item.dur;
+            editDiv.appendChild(durLbl);
+
+            // 付点トグル
+            const dotsLbl = document.createElement('label');
+            dotsLbl.classList.add('form-check', 'form-check-inline');
+            dotsLbl.innerHTML = `
+                <input class="form-check-input dots-toggle" type="checkbox"
+                        ${item.dots ? 'checked' : ''}>
+                <span class="form-check-label">付点</span>
+            `;
+            editDiv.appendChild(dotsLbl);
+
+            // 編集コントロールを li に追加
+            li.appendChild(editDiv);
+
+            // 編集時にデータ＆タイトルを更新
+            editDiv.querySelector('.rest-toggle')
+                .addEventListener('change', e => {
+                    item.rest = e.target.checked;
+                    updateTitleText(title, item);
+                });
+            editDiv.querySelector('.dur-select')
+                .addEventListener('change', e => {
+                    item.dur = e.target.value;
+                    updateTitleText(title, item);
+                });
+            editDiv.querySelector('.dots-toggle')
+                .addEventListener('change', e => {
+                    item.dots = e.target.checked;
+                    updateTitleText(title, item);
+                });
+
+            // 3) 音高選択群（休符でなければ）
+            if (!item.rest) {
+                const pitchDiv = document.createElement('div');
+                pitchDiv.classList.add('pitch-controls');
+
+                // 幹音
+                const pDiv = document.createElement('div');
+                pDiv.innerHTML = '<strong>幹音:</strong> ';
+                basePitches.forEach(p => {
+                    const lbl = document.createElement('label');
+                    lbl.classList.add('mr-2');
+                    lbl.innerHTML = `
+            <input type="radio" name="pname-${itemId}" value="${p}">
+            ${p.toUpperCase()}
+          `;
+                    pDiv.appendChild(lbl);
+                });
+                pitchDiv.appendChild(pDiv);
+
+                // 変化記号
+                const aDiv = document.createElement('div');
+                aDiv.innerHTML = '<strong>変化:</strong> ';
+                accidentals.forEach(([val, sym]) => {
+                    const lbl = document.createElement('label');
+                    lbl.classList.add('mr-2');
+                    lbl.innerHTML = `
+            <input type="radio" name="accid-${itemId}" value="${val}">
+            ${sym}
+          `;
+                    aDiv.appendChild(lbl);
+                });
+                pitchDiv.appendChild(aDiv);
+
+                // オクターブ
+                const oDiv = document.createElement('div');
+                oDiv.innerHTML = '<strong>Oct:</strong> ';
+                octaves.forEach(o => {
+                    const lbl = document.createElement('label');
+                    lbl.classList.add('mr-2');
+                    lbl.innerHTML = `
+            <input type="radio" name="oct-${itemId}" value="${o}">
+            ${o}
+          `;
+                    oDiv.appendChild(lbl);
+                });
+                pitchDiv.appendChild(oDiv);
+
+                // 値があれば初期でチェック
+                if (item.pname) pitchDiv.querySelector(`[value="${item.pname}"]`).checked = true;
+                if (item.accid) pitchDiv.querySelector(`[name="accid-${itemId}"][value="${item.accid}"]`).checked = true;
+                if (item.oct) pitchDiv.querySelector(`[value="${item.oct}"]`).checked = true;
+
+                // イベント登録
+                pitchDiv.querySelectorAll('input[type=radio]').forEach(r => {
+                    r.addEventListener('change', ev => {
+                        const [type] = ev.target.name.split('-');
+                        item[type] = ev.target.value;
+                    });
+                });
+
+                li.appendChild(pitchDiv);
+            }
+
+            // 4) オプション（ビーム・タイ）
+            const optDiv = document.createElement('div');
+            optDiv.classList.add('option-controls');
+            [
+                ['beamBefore', '前ビーム'],
+                ['beamAfter', '後ビーム'],
+                ['tieI', 'タイ開始 (i)'],
+                ['tieT', 'タイ終了 (t)']
+            ].forEach(([prop, label]) => {
+                const chk = document.createElement('div');
+                chk.classList.add('form-check', 'form-check-inline');
+                chk.innerHTML = `
+          <input class="form-check-input" type="checkbox" id="${prop}-${itemId}">
+          <label class="form-check-label" for="${prop}-${itemId}">${label}</label>
+        `;
+                // 初期状態
+                chk.querySelector('input').checked = item[prop];
+                // 変更時
+                chk.querySelector('input')
+                    .addEventListener('change', e => item[prop] = e.target.checked);
+                optDiv.appendChild(chk);
+            });
+            li.appendChild(optDiv);
+
+            // 5) 削除ボタン
+            const delBtn = document.createElement('button');
+            delBtn.className = 'btn btn-sm btn-outline-danger align-self-end';
+            delBtn.textContent = 'このカードを削除';
+            delBtn.addEventListener('click', () => {
+                // 配列から除外
+                rhythmItems = rhythmItems.filter(x => x.id !== itemId);
+                // UI からも除外
+                li.remove();
+            });
+            li.appendChild(delBtn);
+
+            // 最後にリストへ追加
+            rhythmList.appendChild(li);
+        }
+
+        // タイトルテキスト更新ヘルパー
+        function updateTitleText(el, item) {
+            if (item.rest) {
+                el.textContent = `休符 (${item.dur}分音符${item.dots ? '・付点' : ''})`;
+            } else {
+                el.textContent = `音符 (${item.dur}分音符${item.dots ? '・付点' : ''})`;
+            }
+        }
+
+        // ── MEI 出力処理 ─────────────────────────
+        outputMeiBtn.addEventListener('click', () => {
+            let mei = '';
+            rhythmItems.forEach(item => {
+                // 前ビーム
+                if (item.beamBefore) mei += `<beam>\n`;
+
+                if (item.rest) {
+                    mei += `<rest dur="${item.dur}"${item.dots ? ` dots="1"` : ''}/>\n`;
+                } else {
+                    // note 属性を構築
+                    let attrs = ` dur="${item.dur}"`;
+                    if (item.dots) attrs += ` dots="1"`;
+                    if (item.pname) attrs += ` pname="${item.pname}"`;
+                    if (item.oct) attrs += ` oct="${item.oct}"`;
+                    if (item.accid) attrs += ` accid="${item.accid}"`;
+                    // tie は i,t 両方あり得るが同時は通常なし
+                    if (item.tieI) attrs += ` tie="i"`;
+                    if (item.tieT) attrs += ` tie="t"`;
+                    mei += `<note${attrs}/>\n`;
+                }
+
+                // 後ビームは閉じタグ
+                if (item.beamAfter) mei += `</beam>\n`;
+            });
+            meiTextarea.value = mei;
+        });
+
+        // ── その他ボタン ─────────────────────────
+        clearOutputBtn.addEventListener('click', () => meiTextarea.value = '');
+        copyOutputBtn.addEventListener('click', () => {
+            meiTextarea.select();
+            document.execCommand('copy');
+            alert('MEI をクリップボードにコピーしました。');
+        });
+        clearRhythmBtn.addEventListener('click', () => {
+            rhythmList.innerHTML = '';
+            rhythmItems = [];
+            meiTextarea.value = '';
+        });
+    </script>
+
+    <!-- Bootstrap JS -->
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.5.3/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+</body>
+
+</html>
