@@ -6,6 +6,7 @@ const required = [
   `${root}/package.json`,
   `${root}/appsscript.json`,
   `${root}/src/Smoke.gs`,
+  `${root}/src/Acceptance.gs`,
   '.github/workflows/gas-dev-deploy.yml',
   '.github/workflows/gas-prod-deploy.yml.disabled'
 ];
@@ -15,11 +16,28 @@ for (const file of required) {
 }
 
 JSON.parse(fs.readFileSync(`${root}/package.json`, 'utf8'));
-JSON.parse(fs.readFileSync(`${root}/appsscript.json`, 'utf8'));
+const manifest = JSON.parse(fs.readFileSync(`${root}/appsscript.json`, 'utf8'));
+
+const scopes = new Set(manifest.oauthScopes || []);
+for (const requiredScope of [
+  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/spreadsheets'
+]) {
+  if (!scopes.has(requiredScope)) throw new Error(`missing required OAuth scope: ${requiredScope}`);
+}
+
+const advanced = manifest?.dependencies?.enabledAdvancedServices || [];
+if (!advanced.some(x => x.userSymbol === 'Drive' && x.serviceId === 'drive' && x.version === 'v3')) {
+  throw new Error('Drive v3 Advanced Service declaration missing');
+}
 
 const smoke = fs.readFileSync(`${root}/src/Smoke.gs`, 'utf8');
-if (!smoke.includes('HUMAN GATE REQUIRED')) {
+const acceptance = fs.readFileSync(`${root}/src/Acceptance.gs`, 'utf8');
+if (!smoke.includes('HUMAN GATE REQUIRED') || !acceptance.includes('HUMAN GATE REQUIRED')) {
   throw new Error('production trigger guard missing');
+}
+if (!acceptance.includes('runIntegratedAcceptanceTest')) {
+  throw new Error('integrated acceptance entrypoint missing');
 }
 
 if (fs.existsSync('.github/workflows/gas-prod-deploy.yml')) {
