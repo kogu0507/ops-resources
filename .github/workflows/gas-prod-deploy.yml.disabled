@@ -1,0 +1,40 @@
+# Intentionally disabled. Rename to .yml only after the production Human Gate.
+name: GAS Prod Deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gas-drive-state-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy-prod:
+    environment: production
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-automation/gas-drive-state
+    steps:
+      - uses: actions/checkout@v6.3.0
+      - uses: actions/setup-node@v6.3.0
+        with:
+          node-version: "20"
+      - run: npm install --no-audit --no-fund
+      - name: Require production credentials
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          CLASP_JSON_PROD: ${{ secrets.CLASP_JSON_PROD }}
+        run: |
+          test -n "$CLASPRC_JSON" || exit 1
+          test -n "$CLASP_JSON_PROD" || exit 1
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          printf '%s' "$CLASP_JSON_PROD" > .clasp.prod.json
+          chmod 600 "$HOME/.clasprc.json" .clasp.prod.json
+      - run: npx clasp status --project .clasp.prod.json
+      - run: npx clasp push --force --project .clasp.prod.json
+      - if: always()
+        run: rm -f "$HOME/.clasprc.json" .clasp.prod.json
