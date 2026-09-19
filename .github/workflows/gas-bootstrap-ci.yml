@@ -1,0 +1,22 @@
+name: GAS Bootstrap CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ai-automation/gas-drive-state/**'
+      - '.github/workflows/gas-*.yml'
+      - '.github/workflows/gas-*.disabled'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.3.0
+      - uses: actions/setup-node@v6.3.0
+        with:
+          node-version: "20"
+      - run: node ai-automation/gas-drive-state/scripts/validate-bootstrap.mjs
