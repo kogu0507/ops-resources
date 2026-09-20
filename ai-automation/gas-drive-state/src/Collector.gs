@@ -1,9 +1,12 @@
 /**
  * Phase 1 bounded TEST collector v0.3.
  * TEST spreadsheet only. No trigger creation. No production writes.
+ *
+ * All DRIVE_STATE changes plus the COLLECTION_RUNS append are committed
+ * in one Google Sheets spreadsheets.batchUpdate request.
  */
 const COLLECTOR_V03 = Object.freeze({
-  VERSION: 'collector-v0.3',
+  VERSION: 'collector-v0.3.1',
   TEST_SPREADSHEET_ID: '1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0',
   SOURCE_SHEET: 'SOURCES',
   STATE_SHEET: 'DRIVE_STATE',
@@ -30,25 +33,27 @@ function v03Run_() {
   const sourcesSheet = v03RequireSheet_(ss, COLLECTOR_V03.SOURCE_SHEET);
   const stateSheet = v03RequireSheet_(ss, COLLECTOR_V03.STATE_SHEET);
   const runsSheet = v03RequireSheet_(ss, COLLECTOR_V03.RUN_SHEET);
-  const sourceRows = v03Objects_(sourcesSheet).filter(r => v03Enabled_(r.enabled));
-  const previousRunRef = v03LastRunId_(runsSheet);
+  const sourceRows = v03ObjectsFromSheet_(sourcesSheet).filter(r => v03Enabled_(r.enabled));
+  const tx = v03BeginTransaction_(ss, stateSheet, runsSheet);
+  const previousRunRef = v03LastRunIdFromSheet_(runsSheet);
   const runId = 'GAS-V03:RUN-' + Utilities.getUuid();
   const outcomes = [];
 
   sourceRows.forEach(source => {
     try {
-      outcomes.push(v03CollectSource_(stateSheet, source));
+      outcomes.push(v03CollectSource_(tx, source));
     } catch (e) {
-      outcomes.push(v03RecordSourceFailure_(stateSheet, source, e));
+      outcomes.push(v03RecordSourceFailure_(tx, source, e));
     }
   });
 
   const successCount = outcomes.filter(x => x.ok).length;
   const errorCount = outcomes.length - successCount;
   const runStatus = errorCount === 0 ? 'SUCCESS' : (successCount > 0 ? 'PARTIAL' : 'FAILED');
-  const staleCount = v03CountStaleForSources_(stateSheet, new Set(sourceRows.map(r => String(r.source_key))));
+  const staleCount = v03CountStaleForSources_(tx, new Set(sourceRows.map(r => String(r.source_key))));
   const finished = new Date();
-  v03AppendRun_(runsSheet, {
+
+  v03QueueRunAppend_(tx, {
     run_id: runId,
     started_at: started.toISOString(),
     finished_at: finished.toISOString(),
@@ -64,19 +69,29 @@ function v03Run_() {
     next_cursor: '',
     previous_run_ref: previousRunRef
   });
-  const result = {run_id:runId, run_status:runStatus, attempted_count:outcomes.length,
-    success_count:successCount, error_count:errorCount, stale_count_after_run:staleCount};
+
+  // Single atomic Google Sheets batchUpdate: either all queued state/run changes apply or none do.
+  v03CommitTransaction_(tx);
+
+  const result = {
+    run_id:runId,
+    run_status:runStatus,
+    attempted_count:outcomes.length,
+    success_count:successCount,
+    error_count:errorCount,
+    stale_count_after_run:staleCount
+  };
   console.log(JSON.stringify(result));
   return result;
 }
 
-function v03CollectSource_(stateSheet, source) {
+function v03CollectSource_(tx, source) {
   v03ValidateSource_(source);
   const kind = String(source.source_kind || '');
-  if (kind === 'FILE') return v03CollectFile_(stateSheet, source);
-  if (kind === 'SHEET_RANGE') return v03CollectSheetRange_(stateSheet, source);
-  if (kind === 'FOLDER_BOUNDED') return v03CollectFolder_(stateSheet, source);
-  if (kind === 'REGISTRY') return v03CollectRegistryFixture_(stateSheet, source);
+  if (kind === 'FILE') return v03CollectFile_(tx, source);
+  if (kind === 'SHEET_RANGE') return v03CollectSheetRange_(tx, source);
+  if (kind === 'FOLDER_BOUNDED') return v03CollectFolder_(tx, source);
+  if (kind === 'REGISTRY') return v03CollectRegistryFixture_(tx, source);
   throw v03Error_('UNSUPPORTED_SOURCE_KIND', 'unsupported source_kind=' + kind);
 }
 
@@ -90,7 +105,7 @@ function v03ValidateSource_(s) {
   if (!Number.isFinite(mins) || mins <= 0) throw v03Error_('MALFORMED_CONFIG','invalid stale_after_minutes');
 }
 
-function v03CollectFile_(stateSheet, s) {
+function v03CollectFile_(tx, s) {
   const now = new Date().toISOString();
   let meta;
   try {
@@ -98,50 +113,77 @@ function v03CollectFile_(stateSheet, s) {
       fields:'id,name,mimeType,modifiedTime,version,trashed'
     });
   } catch (e) {
-    if (v03LooksNotFound_(e)) {
-      v03UpsertState_(stateSheet, v03BaseIdentity_(s,'FILE',String(s.source_ref),String(s.source_ref)), {
-        collected_at:now, collection_status:'NOT_FOUND', last_collection_success_at:now,
-        last_collection_error_at:'', last_collection_error_code:'', last_collection_error:'',
-        stale_after_minutes:Number(s.stale_after_minutes), stale_state:'FRESH',
-        mechanical_signal:'MISSING', mechanical_signal_detail:'authoritative exact FILE lookup completed with NOT_FOUND'
-      });
-      return {ok:true, source_key:String(s.source_key), code:'NOT_FOUND_AUTHORITATIVE'};
-    }
-    throw e;
+    // Drive returns the same 404 for true absence and lack of read access.
+    // Therefore a failed get is never authoritative enough to assert MISSING.
+    throw v03Error_('NOT_FOUND_OR_INACCESSIBLE',
+      'exact FILE lookup failed; absence cannot be distinguished from access loss: ' +
+      String(e && e.message ? e.message : e));
   }
-  if (meta.trashed) throw v03Error_('NOT_FOUND','exact file is trashed');
+
+  const identity = v03BaseIdentity_(s,'FILE',String(meta.id),String(meta.id));
+  if (meta.trashed === true) {
+    v03UpsertState_(tx, identity, {
+      collected_at:now,
+      collection_status:'NOT_FOUND',
+      last_collection_success_at:now,
+      last_collection_error_at:'',
+      last_collection_error_code:'',
+      last_collection_error:'',
+      stale_after_minutes:Number(s.stale_after_minutes),
+      stale_state:'FRESH',
+      mechanical_signal:'MISSING',
+      mechanical_signal_detail:'authoritative exact FILE metadata read reported trashed=true'
+    });
+    return {ok:true, source_key:String(s.source_key), code:'NOT_FOUND_TRASHED'};
+  }
+
   if (s.expected_identity && String(meta.name) !== String(s.expected_identity)) {
-    v03IdentityFailure_(stateSheet, s, 'FILE', String(s.source_ref), 'expected name "'+s.expected_identity+'" got "'+meta.name+'"');
+    v03IdentityFailure_(tx, s, 'FILE', String(meta.id),
+      'expected name "'+s.expected_identity+'" got "'+meta.name+'"');
     return {ok:false, source_key:String(s.source_key), code:'IDENTITY_MISMATCH'};
   }
+
   const key = 'STATE:' + s.source_key;
-  const existing = v03FindUniqueState_(stateSheet, key);
+  const existing = v03FindUniqueState_(tx, key);
   const version = v03VersionSignal_(meta);
   const signal = existing && existing.source_version_signal && existing.source_version_signal !== version ? 'CHANGED' :
     (existing && existing.mechanical_signal === 'MISSING' ? 'CHANGED' : 'NONE');
-  v03UpsertState_(stateSheet, v03BaseIdentity_(s,'FILE',String(meta.id),String(meta.id)), {
-    observed_name:String(meta.name||''), observed_mime_type:String(meta.mimeType||''),
-    observed_modified_at:String(meta.modifiedTime||''), source_version_signal:version,
-    collected_at:now, collection_status:'SUCCESS', last_collection_success_at:now,
-    last_collection_error_at:'', last_collection_error_code:'', last_collection_error:'',
-    stale_after_minutes:Number(s.stale_after_minutes), stale_state:'FRESH',
-    mechanical_signal:signal, mechanical_signal_detail: signal === 'CHANGED' ? 'metadata version changed' : 'exact metadata read'
+
+  v03UpsertState_(tx, identity, {
+    observed_name:String(meta.name||''),
+    observed_mime_type:String(meta.mimeType||''),
+    observed_modified_at:String(meta.modifiedTime||''),
+    source_version_signal:version,
+    collected_at:now,
+    collection_status:'SUCCESS',
+    last_collection_success_at:now,
+    last_collection_error_at:'',
+    last_collection_error_code:'',
+    last_collection_error:'',
+    stale_after_minutes:Number(s.stale_after_minutes),
+    stale_state:'FRESH',
+    mechanical_signal:signal,
+    mechanical_signal_detail:signal === 'CHANGED' ? 'metadata version changed' : 'exact metadata read'
   });
   return {ok:true, source_key:String(s.source_key), code:'SUCCESS'};
 }
 
-function v03CollectSheetRange_(stateSheet, s) {
+function v03CollectSheetRange_(tx, s) {
   const now = new Date().toISOString();
   const selector = String(s.selector||'');
   if (!/^[^!]+![A-Z]+\d+(:[A-Z]+\d+)?$/i.test(selector)) {
     throw v03Error_('MALFORMED_CONFIG','selector must be bounded A1 range with sheet name');
   }
-  const meta = Drive.Files.get(String(s.source_ref), {fields:'id,name,mimeType,modifiedTime,version,trashed'});
+  const meta = Drive.Files.get(String(s.source_ref), {
+    fields:'id,name,mimeType,modifiedTime,version,trashed'
+  });
   if (meta.trashed) throw v03Error_('NOT_FOUND','spreadsheet is trashed');
   if (s.expected_identity && String(meta.name) !== String(s.expected_identity)) {
-    v03IdentityFailure_(stateSheet, s, 'SHEET_RANGE', selector, 'expected name "'+s.expected_identity+'" got "'+meta.name+'"');
+    v03IdentityFailure_(tx, s, 'SHEET_RANGE', selector,
+      'expected name "'+s.expected_identity+'" got "'+meta.name+'"');
     return {ok:false, source_key:String(s.source_key), code:'IDENTITY_MISMATCH'};
   }
+
   const bang = selector.indexOf('!');
   const sheetName = selector.slice(0,bang);
   const a1 = selector.slice(bang+1);
@@ -152,32 +194,44 @@ function v03CollectSheetRange_(stateSheet, s) {
     .map(b => ('0'+((b<0?b+256:b).toString(16))).slice(-2)).join('');
   const version = 'range-sha256:' + digest;
   const key = 'STATE:' + s.source_key;
-  const existing = v03FindUniqueState_(stateSheet, key);
+  const existing = v03FindUniqueState_(tx, key);
   const signal = existing && existing.source_version_signal && existing.source_version_signal !== version ? 'CHANGED' : 'NONE';
-  v03UpsertState_(stateSheet, v03BaseIdentity_(s,'SHEET_RANGE',selector,String(s.source_ref)), {
+
+  v03UpsertState_(tx, v03BaseIdentity_(s,'SHEET_RANGE',selector,String(s.source_ref)), {
     observed_name:String(meta.name||'') + ' ' + selector,
     observed_mime_type:String(meta.mimeType||'application/vnd.google-apps.spreadsheet'),
-    observed_modified_at:String(meta.modifiedTime||''), source_version_signal:version,
-    collected_at:now, collection_status:'SUCCESS', last_collection_success_at:now,
-    last_collection_error_at:'', last_collection_error_code:'', last_collection_error:'',
-    stale_after_minutes:Number(s.stale_after_minutes), stale_state:'FRESH',
-    mechanical_signal:signal, mechanical_signal_detail: signal === 'CHANGED' ? 'bounded range digest changed' : 'bounded range read'
+    observed_modified_at:String(meta.modifiedTime||''),
+    source_version_signal:version,
+    collected_at:now,
+    collection_status:'SUCCESS',
+    last_collection_success_at:now,
+    last_collection_error_at:'',
+    last_collection_error_code:'',
+    last_collection_error:'',
+    stale_after_minutes:Number(s.stale_after_minutes),
+    stale_state:'FRESH',
+    mechanical_signal:signal,
+    mechanical_signal_detail:signal === 'CHANGED' ? 'bounded range digest changed' : 'bounded range read'
   });
   return {ok:true, source_key:String(s.source_key), code:'SUCCESS'};
 }
 
-function v03CollectFolder_(stateSheet, s) {
+function v03CollectFolder_(tx, s) {
   const now = new Date().toISOString();
   const cfg = v03ParseFolderSelector_(String(s.selector||''));
-  const folder = Drive.Files.get(String(s.source_ref), {fields:'id,name,mimeType,trashed'});
+  const folder = Drive.Files.get(String(s.source_ref), {
+    fields:'id,name,mimeType,trashed'
+  });
   if (folder.trashed || folder.mimeType !== 'application/vnd.google-apps.folder') {
     throw v03Error_('NOT_FOUND','configured folder unavailable');
   }
-  // For FOLDER_BOUNDED, the configured exact source_ref is the stable identity.
-  // expected_identity may be a human-readable fixture label and is not used to rebind the exact folder ID.
 
-  let token = null, pages = 0, incomplete = false;
+  // source_ref is the stable exact identity for FOLDER_BOUNDED.
+  let token = null;
+  let pages = 0;
+  let incomplete = false;
   const files = [];
+
   do {
     const params = {
       q:"'"+String(s.source_ref)+"' in parents and trashed = false",
@@ -196,6 +250,7 @@ function v03CollectFolder_(stateSheet, s) {
   } while (token);
 
   if (incomplete) throw v03Error_('INCOMPLETE_ENUMERATION','Drive returned incompleteSearch=true');
+
   const ids = files.map(f => String(f.id));
   if (new Set(ids).size !== ids.length) throw v03Error_('DUPLICATE_ENTITY','duplicate file id in enumeration');
   if (cfg.fixtureCount !== null && ids.length !== cfg.fixtureCount) {
@@ -204,115 +259,176 @@ function v03CollectFolder_(stateSheet, s) {
 
   files.forEach(meta => {
     const stateKey = 'STATE:' + s.source_key + ':' + meta.id;
-    const existing = v03FindUniqueState_(stateSheet, stateKey);
+    const existing = v03FindUniqueState_(tx, stateKey);
     const version = v03VersionSignal_(meta);
     const signal = existing && existing.source_version_signal && existing.source_version_signal !== version ? 'CHANGED' :
       (existing && existing.mechanical_signal === 'MISSING' ? 'CHANGED' : 'NONE');
-    v03UpsertState_(stateSheet, {
-      state_key:stateKey, source_key:String(s.source_key), entity_kind:'FILE',
-      entity_key:String(meta.id), source_ref:String(meta.id), authority_ref:String(s.authority_ref||'')
+
+    v03UpsertState_(tx, {
+      state_key:stateKey,
+      source_key:String(s.source_key),
+      entity_kind:'FILE',
+      entity_key:String(meta.id),
+      source_ref:String(meta.id),
+      authority_ref:String(s.authority_ref||'')
     }, {
-      observed_name:String(meta.name||''), observed_mime_type:String(meta.mimeType||''),
-      observed_modified_at:String(meta.modifiedTime||''), source_version_signal:version,
-      collected_at:now, collection_status:'SUCCESS', last_collection_success_at:now,
-      last_collection_error_at:'', last_collection_error_code:'', last_collection_error:'',
-      stale_after_minutes:Number(s.stale_after_minutes), stale_state:'FRESH',
-      mechanical_signal:signal, mechanical_signal_detail:'complete non-recursive bounded folder listing'
+      observed_name:String(meta.name||''),
+      observed_mime_type:String(meta.mimeType||''),
+      observed_modified_at:String(meta.modifiedTime||''),
+      source_version_signal:version,
+      collected_at:now,
+      collection_status:'SUCCESS',
+      last_collection_success_at:now,
+      last_collection_error_at:'',
+      last_collection_error_code:'',
+      last_collection_error:'',
+      stale_after_minutes:Number(s.stale_after_minutes),
+      stale_state:'FRESH',
+      mechanical_signal:signal,
+      mechanical_signal_detail:'complete non-recursive bounded folder listing'
     });
   });
 
+  // Only after complete enumeration may prior known managed entities become MISSING.
   const seen = new Set(ids);
-  v03ManagedFolderRows_(stateSheet, String(s.source_key)).forEach(row => {
+  v03ManagedFolderRows_(tx, String(s.source_key)).forEach(row => {
     if (!seen.has(String(row.entity_key))) {
-      v03PatchExisting_(stateSheet, row.__row, {
-        collected_at:now, collection_status:'NOT_FOUND', last_collection_success_at:now,
-        last_collection_error_at:'', last_collection_error_code:'', last_collection_error:'',
-        stale_after_minutes:Number(s.stale_after_minutes), stale_state:'FRESH',
-        mechanical_signal:'MISSING', mechanical_signal_detail:'complete authoritative bounded folder listing proved absence'
+      v03PatchExisting_(tx, row, {
+        collected_at:now,
+        collection_status:'NOT_FOUND',
+        last_collection_success_at:now,
+        last_collection_error_at:'',
+        last_collection_error_code:'',
+        last_collection_error:'',
+        stale_after_minutes:Number(s.stale_after_minutes),
+        stale_state:'FRESH',
+        mechanical_signal:'MISSING',
+        mechanical_signal_detail:'complete authoritative bounded folder listing proved absence'
       });
     }
   });
-  return {ok:true, source_key:String(s.source_key), code:'SUCCESS', entities:files.length, pages:pages};
+
+  return {
+    ok:true,
+    source_key:String(s.source_key),
+    code:'SUCCESS',
+    entities:files.length,
+    pages:pages
+  };
 }
 
-function v03CollectRegistryFixture_(stateSheet, s) {
-  if (String(s.source_ref) !== 'SYNTHETIC_AMBIGUOUS') throw v03Error_('UNSUPPORTED_REGISTRY_ROUTE','only synthetic registry fixture allowed in v0.3');
+function v03CollectRegistryFixture_(tx, s) {
+  if (String(s.source_ref) !== 'SYNTHETIC_AMBIGUOUS') {
+    throw v03Error_('UNSUPPORTED_REGISTRY_ROUTE','only synthetic registry fixture allowed in v0.3');
+  }
   const now = new Date().toISOString();
-  v03UpsertState_(stateSheet, v03BaseIdentity_(s,'REGISTRY','SYNTHETIC_AMBIGUOUS',''), {
-    collected_at:now, collection_status:'AMBIGUOUS',
-    last_collection_error_at:now, last_collection_error_code:'AMBIGUOUS_ROUTE',
+  v03UpsertState_(tx, v03BaseIdentity_(s,'REGISTRY','SYNTHETIC_AMBIGUOUS',''), {
+    collected_at:now,
+    collection_status:'AMBIGUOUS',
+    last_collection_error_at:now,
+    last_collection_error_code:'AMBIGUOUS_ROUTE',
     last_collection_error:'synthetic 2 eligible matches; no tie-break',
-    stale_after_minutes:Number(s.stale_after_minutes), stale_state:'UNKNOWN',
-    mechanical_signal:'ROUTE_INVALID', mechanical_signal_detail:'synthetic fail-closed route fixture'
+    stale_after_minutes:Number(s.stale_after_minutes),
+    stale_state:'UNKNOWN',
+    mechanical_signal:'ROUTE_INVALID',
+    mechanical_signal_detail:'synthetic fail-closed route fixture'
   });
   return {ok:false, source_key:String(s.source_key), code:'AMBIGUOUS_ROUTE'};
 }
 
-function v03RecordSourceFailure_(stateSheet, s, e) {
+function v03RecordSourceFailure_(tx, s, e) {
   const now = new Date().toISOString();
   const code = e && e.v03code ? e.v03code : 'COLLECTION_ERROR';
   const patch = {
     collection_status: code === 'IDENTITY_MISMATCH' ? 'IDENTITY_MISMATCH' : 'ERROR',
-    last_collection_error_at:now, last_collection_error_code:code,
+    last_collection_error_at:now,
+    last_collection_error_code:code,
     last_collection_error:String(e && e.message ? e.message : e),
-    stale_after_minutes:Number(s.stale_after_minutes)||60, stale_state:'UNKNOWN',
-    mechanical_signal: code === 'IDENTITY_MISMATCH' ? 'ROUTE_INVALID' : 'HEALTH_FAIL',
-    mechanical_signal_detail:'source-local failure; last-known facts preserved'
+    stale_after_minutes:Number(s.stale_after_minutes)||60,
+    stale_state:'UNKNOWN',
+    mechanical_signal:code === 'IDENTITY_MISMATCH' ? 'ROUTE_INVALID' : 'HEALTH_FAIL',
+    mechanical_signal_detail:'source-local failure; last-known facts preserved; no MISSING inference'
   };
 
-  // A failed source attempt invalidates freshness for every collector-managed row
-  // produced by that source. It must never manufacture MISSING.
-  const targets = v03FailureTargets_(stateSheet, s);
+  const targets = v03FailureTargets_(tx, s);
   if (targets.length) {
-    targets.forEach(row => v03PatchExisting_(stateSheet, row.__row, patch));
+    targets.forEach(row => v03PatchExisting_(tx, row, patch));
   } else {
     const identity = v03BaseIdentity_(s, String(s.source_kind||'UNKNOWN'),
       String(s.source_ref||''), String(s.source_ref||''));
-    v03UpsertState_(stateSheet, identity, patch);
+    v03UpsertState_(tx, identity, patch);
   }
   return {ok:false, source_key:String(s.source_key||'UNKNOWN'), code:code};
 }
 
-function v03FailureTargets_(sheet, s) {
+function v03FailureTargets_(tx, s) {
   const sourceKey = String(s.source_key||'');
-  const rows = v03Objects_(sheet);
   if (String(s.source_kind) === 'FOLDER_BOUNDED') {
-    return rows.filter(r =>
+    return tx.stateRows.filter(r =>
       String(r.source_key) === sourceKey &&
       String(r.entity_kind) === 'FILE' &&
       String(r.state_key).startsWith('STATE:'+sourceKey+':')
     );
   }
-  return rows.filter(r => String(r.state_key) === 'STATE:'+sourceKey);
+  return tx.stateRows.filter(r => String(r.state_key) === 'STATE:'+sourceKey);
 }
 
-function v03IdentityFailure_(stateSheet, s, kind, entityKey, detail) {
+function v03IdentityFailure_(tx, s, kind, entityKey, detail) {
   const now = new Date().toISOString();
   const key = 'STATE:' + s.source_key;
-  const existing = v03FindUniqueState_(stateSheet, key);
+  const existing = v03FindUniqueState_(tx, key);
   const identity = existing ? {
-    state_key:key, source_key:String(existing.source_key), entity_kind:String(existing.entity_kind),
-    entity_key:String(existing.entity_key), source_ref:String(existing.source_ref),
+    state_key:key,
+    source_key:String(existing.source_key),
+    entity_kind:String(existing.entity_kind),
+    entity_key:String(existing.entity_key),
+    source_ref:String(existing.source_ref),
     authority_ref:String(existing.authority_ref||'')
   } : v03BaseIdentity_(s,kind,entityKey,String(s.source_ref||''));
-  v03UpsertState_(stateSheet, identity, {
-    collection_status:'IDENTITY_MISMATCH', last_collection_error_at:now,
-    last_collection_error_code:'IDENTITY_MISMATCH', last_collection_error:detail,
-    stale_after_minutes:Number(s.stale_after_minutes), stale_state:'UNKNOWN',
-    mechanical_signal:'ROUTE_INVALID', mechanical_signal_detail:'stable identity preserved; observed target rejected'
+
+  v03UpsertState_(tx, identity, {
+    collection_status:'IDENTITY_MISMATCH',
+    last_collection_error_at:now,
+    last_collection_error_code:'IDENTITY_MISMATCH',
+    last_collection_error:detail,
+    stale_after_minutes:Number(s.stale_after_minutes),
+    stale_state:'UNKNOWN',
+    mechanical_signal:'ROUTE_INVALID',
+    mechanical_signal_detail:'stable identity preserved; observed target rejected'
   });
 }
 
 function v03BaseIdentity_(s, kind, entityKey, sourceRef) {
   return {
-    state_key:'STATE:' + String(s.source_key), source_key:String(s.source_key),
-    entity_kind:String(kind), entity_key:String(entityKey||''),
-    source_ref:String(sourceRef||''), authority_ref:String(s.authority_ref||'')
+    state_key:'STATE:' + String(s.source_key),
+    source_key:String(s.source_key),
+    entity_kind:String(kind),
+    entity_key:String(entityKey||''),
+    source_ref:String(sourceRef||''),
+    authority_ref:String(s.authority_ref||'')
   };
 }
 
-function v03UpsertState_(sheet, identity, patch) {
-  const found = v03FindUniqueState_(sheet, identity.state_key);
+/* ---------- in-memory transaction + one atomic Sheets API commit ---------- */
+
+function v03BeginTransaction_(ss, stateSheet, runsSheet) {
+  const stateHeader = v03Header_(stateSheet);
+  const runHeader = v03Header_(runsSheet);
+  return {
+    spreadsheetId:ss.getId(),
+    stateSheetId:stateSheet.getSheetId(),
+    runSheetId:runsSheet.getSheetId(),
+    stateHeader:stateHeader,
+    runHeader:runHeader,
+    stateRows:v03ObjectsFromSheet_(stateSheet),
+    dirtyCells:new Map(),
+    newStateRows:[],
+    runAppend:null
+  };
+}
+
+function v03UpsertState_(tx, identity, patch) {
+  const found = v03FindUniqueState_(tx, identity.state_key);
   if (found) {
     if (String(found.source_key) !== String(identity.source_key) ||
         String(found.entity_kind) !== String(identity.entity_kind) ||
@@ -321,99 +437,166 @@ function v03UpsertState_(sheet, identity, patch) {
         String(found.authority_ref||'') !== String(identity.authority_ref||'')) {
       throw v03Error_('IDENTITY_MISMATCH','stable state identity cannot be repurposed: '+identity.state_key);
     }
-    v03PatchExisting_(sheet, found.__row, patch);
+    v03PatchExisting_(tx, found, patch);
     return;
   }
-  const header = v03Header_(sheet);
-  const row = {};
-  header.forEach(h => row[h] = '');
+
+  const row = {__row:null,__isNew:true};
+  tx.stateHeader.forEach(h => row[h] = '');
   Object.assign(row, identity, patch);
   if ('judge_status' in row && !row.judge_status) row.judge_status = 'UNREVIEWED';
-  sheet.appendRow(header.map(h => row[h] === undefined ? '' : row[h]));
+  tx.stateRows.push(row);
+  tx.newStateRows.push(row);
 }
 
-function v03PatchExisting_(sheet, rowNumber, patch) {
-  const header = v03Header_(sheet);
+function v03PatchExisting_(tx, row, patch) {
   const allowed = new Set([
     'observed_name','observed_mime_type','observed_modified_at','source_version_signal',
     'collected_at','collection_status','last_collection_success_at','last_collection_error_at',
     'last_collection_error_code','last_collection_error','stale_after_minutes','stale_state',
     'mechanical_signal','mechanical_signal_detail'
   ]);
+
   Object.keys(patch).forEach(k => {
     if (!allowed.has(k)) throw v03Error_('OWNERSHIP_VIOLATION','Collector attempted field '+k);
-    const col = header.indexOf(k);
-    if (col < 0) throw v03Error_('SCHEMA_ERROR','missing state field '+k);
-    sheet.getRange(rowNumber,col+1).setValue(patch[k]);
+    const colIndex = tx.stateHeader.indexOf(k);
+    if (colIndex < 0) throw v03Error_('SCHEMA_ERROR','missing state field '+k);
+    row[k] = patch[k];
+    if (!row.__isNew) {
+      tx.dirtyCells.set(row.__row + ':' + colIndex, {
+        rowNumber:row.__row,
+        colIndex:colIndex,
+        value:patch[k]
+      });
+    }
   });
 }
 
-function v03ManagedFolderRows_(sheet, sourceKey) {
-  return v03Objects_(sheet).filter(r =>
+function v03QueueRunAppend_(tx, values) {
+  if (tx.runAppend) throw v03Error_('RUN_TRANSACTION_ERROR','run append already queued');
+  const row = {};
+  tx.runHeader.forEach(h => row[h] = values[h] === undefined ? '' : values[h]);
+  tx.runAppend = row;
+}
+
+function v03CommitTransaction_(tx) {
+  if (!tx.runAppend) throw v03Error_('RUN_TRANSACTION_ERROR','run append missing');
+  const requests = [];
+
+  [...tx.dirtyCells.values()]
+    .sort((a,b) => a.rowNumber - b.rowNumber || a.colIndex - b.colIndex)
+    .forEach(cell => {
+      requests.push({
+        updateCells:{
+          range:{
+            sheetId:tx.stateSheetId,
+            startRowIndex:cell.rowNumber-1,
+            endRowIndex:cell.rowNumber,
+            startColumnIndex:cell.colIndex,
+            endColumnIndex:cell.colIndex+1
+          },
+          rows:[{values:[v03CellData_(cell.value)]}],
+          fields:'userEnteredValue'
+        }
+      });
+    });
+
+  tx.newStateRows.forEach(row => {
+    requests.push({
+      appendCells:{
+        sheetId:tx.stateSheetId,
+        rows:[{values:tx.stateHeader.map(h => v03CellData_(row[h]))}],
+        fields:'userEnteredValue'
+      }
+    });
+  });
+
+  requests.push({
+    appendCells:{
+      sheetId:tx.runSheetId,
+      rows:[{values:tx.runHeader.map(h => v03CellData_(tx.runAppend[h]))}],
+      fields:'userEnteredValue'
+    }
+  });
+
+  Sheets.Spreadsheets.batchUpdate({requests:requests}, tx.spreadsheetId);
+}
+
+function v03CellData_(value) {
+  if (value === null || value === undefined) return {userEnteredValue:{stringValue:''}};
+  if (typeof value === 'boolean') return {userEnteredValue:{boolValue:value}};
+  if (typeof value === 'number' && Number.isFinite(value)) return {userEnteredValue:{numberValue:value}};
+  return {userEnteredValue:{stringValue:String(value)}};
+}
+
+function v03ManagedFolderRows_(tx, sourceKey) {
+  return tx.stateRows.filter(r =>
     String(r.source_key) === sourceKey &&
     String(r.entity_kind) === 'FILE' &&
     String(r.state_key).startsWith('STATE:'+sourceKey+':')
   );
 }
 
-function v03FindUniqueState_(sheet, stateKey) {
-  const matches = v03Objects_(sheet).filter(r => String(r.state_key) === String(stateKey));
+function v03FindUniqueState_(tx, stateKey) {
+  const matches = tx.stateRows.filter(r => String(r.state_key) === String(stateKey));
   if (matches.length > 1) throw v03Error_('DUPLICATE_STATE_KEY','duplicate state_key='+stateKey);
   return matches[0] || null;
 }
 
-function v03CountStaleForSources_(sheet, keys) {
-  return v03Objects_(sheet).filter(r => keys.has(String(r.source_key)) &&
+function v03CountStaleForSources_(tx, keys) {
+  return tx.stateRows.filter(r => keys.has(String(r.source_key)) &&
     (String(r.stale_state) === 'STALE' || String(r.stale_state) === 'UNKNOWN')).length;
 }
 
-function v03AppendRun_(sheet, values) {
-  const header = v03Header_(sheet);
-  sheet.appendRow(header.map(h => values[h] === undefined ? '' : values[h]));
-}
+/* ---------- read-only helpers ---------- */
 
-function v03LastRunId_(sheet) {
-  const rows = v03Objects_(sheet);
-  return rows.length ? String(rows[rows.length-1].run_id||'') : '';
-}
-
-function v03Objects_(sheet) {
+function v03ObjectsFromSheet_(sheet) {
   const values = sheet.getDataRange().getValues();
   if (!values.length) return [];
   const header = values[0].map(String);
   return values.slice(1).map((row,i) => {
-    const obj = {__row:i+2};
+    const obj = {__row:i+2,__isNew:false};
     header.forEach((h,j) => obj[h] = row[j]);
     return obj;
-  }).filter(r => Object.keys(r).some(k => k !== '__row' && r[k] !== ''));
+  }).filter(r => Object.keys(r).some(k => !k.startsWith('__') && r[k] !== ''));
+}
+
+function v03LastRunIdFromSheet_(sheet) {
+  const rows = v03ObjectsFromSheet_(sheet);
+  return rows.length ? String(rows[rows.length-1].run_id||'') : '';
 }
 
 function v03Header_(sheet) {
   return sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0].map(String);
 }
+
 function v03RequireSheet_(ss,name) {
   const s = ss.getSheetByName(name);
   if (!s) throw v03Error_('SCHEMA_ERROR','missing sheet '+name);
   return s;
 }
+
 function v03Enabled_(v) {
   return v === true || String(v).toUpperCase() === 'TRUE' || String(v) === '1';
 }
+
 function v03VersionSignal_(m) {
   return m.version ? 'version:'+String(m.version) : 'modified:'+String(m.modifiedTime||'');
 }
+
 function v03ParseFolderSelector_(text) {
-  if (!/(^|;)\s*non_recursive\s*(;|$)/i.test(text)) throw v03Error_('MALFORMED_CONFIG','FOLDER_BOUNDED requires non_recursive selector');
+  if (!/(^|;)\s*non_recursive\s*(;|$)/i.test(text)) {
+    throw v03Error_('MALFORMED_CONFIG','FOLDER_BOUNDED requires non_recursive selector');
+  }
   const p = /page_size\s*=\s*(\d+)/i.exec(text);
   const f = /fixture_count\s*=\s*(\d+)/i.exec(text);
   const pageSize = p ? Number(p[1]) : 100;
-  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 1000) throw v03Error_('MALFORMED_CONFIG','invalid page_size');
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 1000) {
+    throw v03Error_('MALFORMED_CONFIG','invalid page_size');
+  }
   return {pageSize:pageSize, fixtureCount:f ? Number(f[1]) : null};
 }
-function v03LooksNotFound_(e) {
-  const t = String(e && e.message ? e.message : e);
-  return /not found|File not found|404/i.test(t);
-}
+
 function v03Error_(code,message) {
   const e = new Error(message);
   e.v03code = code;
