@@ -1,71 +1,118 @@
-# AI Automation — GAS Drive-state CI/CD
+# AI Automation — GAS Drive-state
 
-Status: bootstrap candidate. This repository path is a technical delivery substrate; Google Drive remains the project authority.
+Google Drive is the project authority. This repository is the technical source/deployment substrate for the bounded Drive-state collector.
 
-## Target flow
+## Current status — 2026-09-20
 
-ChatGPT -> GitHub branch/PR -> CI checks -> manual Dev deploy -> Dev verification -> Human Gate -> separately approved Prod deploy -> verification -> Drive checkpoint.
+**Operational baseline: Dev-only, verified, Production frozen.**
 
-## Safety
+Verified Dev path:
+- GitHub main -> manual GitHub Actions -> clasp -> exact Dev Apps Script target
+- bounded collector v0.3
+- SOURCES -> DRIVE_STATE -> COLLECTION_RUNS
+- run-level Sheets batchUpdate commit
+- fresh post-commit readback
+- fail-closed source failure / UNKNOWN handling
+- complete bounded enumeration before MISSING
+- Collector/Judge field ownership separation
+- empirical two-invocation ScriptLock overlap: contender returns SKIPPED / LOCK_HELD and performs no run write
 
-- No Apps Script target ID or OAuth token is committed.
-- Dev uses GitHub Environment `development`; Prod uses `production`.
-- Dev and Prod use separate clasp credential/mapping secret names.
-- Exact target identity is checked against an independently configured Environment variable before any `clasp push`.
-- Clasp `rootDir` is fixed to `src`.
-- Deploy preflight rejects files outside the explicit bootstrap push allowlist.
-- Dev deploy is manual (`workflow_dispatch`).
-- Prod deploy workflow remains `.disabled` until a later Human Gate.
-- `clasp push` replaces the whole target project source, so exact-target verification precedes status/push.
-- Rollback is a Git commit/ref redeploy to the same independently verified target, followed by verification/readback.
+No Production collector is running.
+No recurring Drive-state trigger exists.
+Do not enable the disabled Production workflow without a new explicit Human Gate.
 
-## Required one-time Dev setup
+## Known targets
 
-Create GitHub Environment `development` and configure:
-- secret `CLASPRC_JSON_DEV`
-- secret `CLASP_JSON_DEV` = exactly `{"scriptId":"<DEV_SCRIPT_ID>","rootDir":"src"}`
-- variable `EXPECTED_DEV_SCRIPT_ID` = Dev Script ID entered independently from the mapping secret
+Dev Apps Script:
+- script ID: `1Txo4FJmWuJtq76e2v3nLrcw2fv1MlMTHJZnFj_lSvhE_7AZVr4UjC2zs`
 
-The Dev credential must be a Dev-only credential profile. Production credentials are not created during bootstrap.
+Dedicated TEST spreadsheet:
+- ID: `1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0`
 
-## Production isolation
-
-Before enabling production:
-- create/use a separate production deployment credential profile, preferably a separate Google deployment identity whose access is limited to the Prod Apps Script project;
-- configure only Environment `production` with `CLASPRC_JSON_PROD`, `CLASP_JSON_PROD`, and `EXPECTED_PROD_SCRIPT_ID`;
-- require the separate Production Human Gate;
-- add post-push verification/readback before activation.
+Frozen, never-run Production observation spreadsheet:
+- title: `FROZEN｜AI Automation Drive-state v0.1｜2026-09-20`
+- ID: `1isIOjxGeJ-h0y_KvnWUqg-zzmK5cbvkLjaVJoon2ssU`
+- contains schema + four configured SOURCES only
+- DRIVE_STATE / COLLECTION_RUNS contain no Production run data
+- must remain inert until explicit resume
 
 ## Repository layout
 
-- `src/` — only files eligible for Apps Script push during bootstrap.
-- `src/appsscript.json` — manifest; clasp `rootDir` is fixed to `src`.
-- `scripts/validate-deploy-target.mjs` — exact target/rootDir/push allowlist guard.
-- `.github/workflows/gas-dev-deploy.yml` — manual Dev deploy using `development`.
-- `.github/workflows/gas-prod-deploy.yml.disabled` — non-runnable Prod template using `production`.
+- `src/Collector.gs` — bounded Dev collector implementation
+- `src/CollectorAcceptance.gs` — Dev acceptance harness
+- `src/LockProbe.gs` — retained empirical overlap probe; not a scheduled runtime component
+- `src/Acceptance.gs` / `src/Smoke.gs` — bootstrap/contract verification helpers
+- `src/appsscript.json` — Apps Script manifest
+- `scripts/validate-deploy-target.mjs` — exact target/rootDir/push allowlist guard
+- `.github/workflows/gas-dev-deploy.yml` — manual Dev deploy
+- `.github/workflows/gas-prod-deploy.yml.disabled` — inert historical Production template; not approved for activation
 
+The source tree is intentionally not reorganized further during closeout. The verified Dev build is more valuable than cosmetic restructuring.
 
-## Dev implementation v0.3
+## Dev deployment contract
 
-The next bounded TEST iteration adds a real collector path, still pinned to the dedicated TEST spreadsheet.
+GitHub Environment `development` supplies:
+- secret `CLASPRC_JSON_DEV`
+- secret `CLASP_JSON_DEV`
+- variable `EXPECTED_DEV_SCRIPT_ID`
 
-Entrypoints:
-- `runBoundedTestCollectorV03()` — reads enabled TEST `SOURCES`, collects bounded Drive/Sheet state, updates only Collector-owned `DRIVE_STATE` fields, and appends one `COLLECTION_RUNS` row.
-- `runCollectorV03Acceptance()` — seeds bounded TEST sentinels, invokes the real collector, and verifies actual source failure freshness plus an actual MISSING transition after a complete bounded folder enumeration.
+Deployment fails closed if the clasp mapping target differs from the independently configured expected script ID.
 
-Supported v0.3 TEST source kinds:
-- exact `FILE` metadata
-- bounded `SHEET_RANGE`
-- non-recursive `FOLDER_BOUNDED`
-- synthetic ambiguous `REGISTRY` negative fixture only
+Dev deploy remains manual via `workflow_dispatch`.
 
-Safety:
-- write target is hard-pinned to TEST spreadsheet `1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0`
-- no trigger creation
-- no production Sheet writes
-- exact Drive IDs / bounded ranges only
-- source-local fail-closed behavior
-- complete folder enumeration required before MISSING
-- newer source failure forces UNKNOWN while retaining last-known facts
-- Judge-owned fields are never included in Collector patch allowlist
-- concurrent LockService overlap still requires a separate empirical two-invocation probe before production scheduling
+## Production freeze
+
+The earlier Production Pilot P0-A path was frozen after a late prerequisite discovery around credential/account topology.
+
+Freeze means:
+- do not create a Production Apps Script project
+- do not create Production clasp/GitHub credentials
+- do not run the frozen Production spreadsheet
+- do not create a recurring trigger
+- do not broaden source scope
+
+The frozen spreadsheet is preserved only as an inert artifact so the interrupted work is explicit rather than ambiguous.
+
+## No-new-account operating direction
+
+If this work is resumed, the preferred option to evaluate first is **same Google owner account + separate Prod Apps Script target + no unattended GitHub Production credential**.
+
+That means:
+- keep Dev and Prod Apps Script projects separate
+- use the existing Google account as the runtime owner for both
+- keep GitHub Actions for Dev only
+- perform infrequent Production code deployment manually from the existing authenticated local/browser context after Human Gate
+- keep exact Prod script/spreadsheet IDs pinned and verify them before any manual deployment
+- enable any recurring Production trigger only under a later separate Human Gate
+
+Why this is the leading no-new-account option:
+- no new Google account
+- no long-lived Production OAuth credential stored in GitHub
+- Dev/Prod runtime targets remain separate
+- deployment is less automated, but Production code changes are expected to be infrequent
+- the main residual risk is that the same Google identity owns both environments; target-ID guards reduce accidental cross-target deployment but do not create identity-level blast-radius isolation
+
+Alternative to evaluate only if manual Production deployment becomes too burdensome:
+- same Google account + separate GitHub `production` Environment/secret/mapping/expected target
+- this restores automated/manual-dispatch CI deployment but has a broader credential blast radius because one Google identity can access multiple Apps Script projects
+
+Do **not** default back to “smallest pilot first.” On resume, compare:
+1. smallest pilot,
+2. bounded direct-to-useful implementation,
+3. reuse/extension of existing infrastructure,
+
+against user time budget, human-step budget, account/credential constraints, urgency, rollback cost, and failure impact.
+
+## Resume prerequisite
+
+Before any Production materialization or Human Gate, perform one end-to-end prerequisite audit covering:
+- accounts and deployment identities
+- credentials and where they are stored
+- ownership/permissions
+- billing/auth requirements
+- UI-only human steps
+- external limits
+- rollback and decommission path
+- expected number of Human Gates and manual actions
+
+No implementation should begin if an unavoidable prerequisite is still likely to surface later.
