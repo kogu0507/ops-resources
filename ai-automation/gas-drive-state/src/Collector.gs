@@ -251,24 +251,39 @@ function v03CollectRegistryFixture_(stateSheet, s) {
 function v03RecordSourceFailure_(stateSheet, s, e) {
   const now = new Date().toISOString();
   const code = e && e.v03code ? e.v03code : 'COLLECTION_ERROR';
-  const key = 'STATE:' + String(s.source_key||'UNKNOWN');
-  const existing = v03FindUniqueState_(stateSheet, key);
-  const identity = existing ? {
-    state_key:key, source_key:String(existing.source_key||s.source_key||'UNKNOWN'),
-    entity_kind:String(existing.entity_kind||s.source_kind||'UNKNOWN'),
-    entity_key:String(existing.entity_key||s.source_ref||''),
-    source_ref:String(existing.source_ref||s.source_ref||''),
-    authority_ref:String(existing.authority_ref||s.authority_ref||'')
-  } : v03BaseIdentity_(s, String(s.source_kind||'UNKNOWN'), String(s.source_ref||''), String(s.source_ref||''));
-  v03UpsertState_(stateSheet, identity, {
+  const patch = {
     collection_status: code === 'IDENTITY_MISMATCH' ? 'IDENTITY_MISMATCH' : 'ERROR',
     last_collection_error_at:now, last_collection_error_code:code,
     last_collection_error:String(e && e.message ? e.message : e),
     stale_after_minutes:Number(s.stale_after_minutes)||60, stale_state:'UNKNOWN',
     mechanical_signal: code === 'IDENTITY_MISMATCH' ? 'ROUTE_INVALID' : 'HEALTH_FAIL',
     mechanical_signal_detail:'source-local failure; last-known facts preserved'
-  });
+  };
+
+  // A failed source attempt invalidates freshness for every collector-managed row
+  // produced by that source. It must never manufacture MISSING.
+  const targets = v03FailureTargets_(stateSheet, s);
+  if (targets.length) {
+    targets.forEach(row => v03PatchExisting_(stateSheet, row.__row, patch));
+  } else {
+    const identity = v03BaseIdentity_(s, String(s.source_kind||'UNKNOWN'),
+      String(s.source_ref||''), String(s.source_ref||''));
+    v03UpsertState_(stateSheet, identity, patch);
+  }
   return {ok:false, source_key:String(s.source_key||'UNKNOWN'), code:code};
+}
+
+function v03FailureTargets_(sheet, s) {
+  const sourceKey = String(s.source_key||'');
+  const rows = v03Objects_(sheet);
+  if (String(s.source_kind) === 'FOLDER_BOUNDED') {
+    return rows.filter(r =>
+      String(r.source_key) === sourceKey &&
+      String(r.entity_kind) === 'FILE' &&
+      String(r.state_key).startsWith('STATE:'+sourceKey+':')
+    );
+  }
+  return rows.filter(r => String(r.state_key) === 'STATE:'+sourceKey);
 }
 
 function v03IdentityFailure_(stateSheet, s, kind, entityKey, detail) {
