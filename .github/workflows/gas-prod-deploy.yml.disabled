@@ -1,4 +1,19 @@
-# Intentionally disabled. Rename to .yml only after the production Human Gate.
+# FROZEN / NON-RUNNABLE TEMPLATE — 2026-09-20
+#
+# This file is intentionally disabled and is NOT an approved Production path.
+# Do not rename to .yml or activate it without a new explicit Human Gate.
+#
+# Current preferred no-new-account direction to evaluate on resume:
+# - same existing Google owner account
+# - separate Prod Apps Script target
+# - no unattended GitHub Production credential
+# - infrequent Production deploy performed manually after Human Gate
+#
+# This template is retained only as historical implementation material for the
+# alternative same-account + GitHub production-environment approach.
+# If that approach is ever selected, credential blast radius and exact-target
+# separation must be reviewed again before activation.
+
 name: GAS Prod Deploy
 
 on:
