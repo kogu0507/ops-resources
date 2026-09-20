@@ -1,11 +1,14 @@
 /**
  * Acceptance for the real bounded TEST collector v0.3.
  * Self-contained: seeds and cleans its own sentinel state.
+ *
+ * IMPORTANT: collector runtime commits through the Advanced Sheets API.
+ * Post-commit assertions therefore read back through the Advanced Sheets API,
+ * not the pre-existing SpreadsheetApp object, to avoid stale service caches.
  */
 function runCollectorV03Acceptance() {
   const ss = SpreadsheetApp.openById(COLLECTOR_V03.TEST_SPREADSHEET_ID);
   const state = ss.getSheetByName(COLLECTOR_V03.STATE_SHEET);
-  const runs = ss.getSheetByName(COLLECTOR_V03.RUN_SHEET);
 
   const archSnapshot = v03TestSnapshotFields_(state, 'STATE:T-FILE-ARCH', [
     'judge_status','judge_classification','judge_summary','judge_next_action',
@@ -70,7 +73,8 @@ function runCollectorV03Acceptance() {
       judge_status:'UNREVIEWED'
     });
 
-    const beforeRuns = runs.getLastRow();
+    SpreadsheetApp.flush();
+    const beforeRuns = v03TestFreshObjects_(COLLECTOR_V03.RUN_SHEET).length;
     const result = runBoundedTestCollectorV03();
 
     v03AssertAccept_(result.run_status === 'PARTIAL',
@@ -78,10 +82,14 @@ function runCollectorV03Acceptance() {
     v03AssertAccept_(result.attempted_count === 5, 'expected 5 enabled SOURCES');
     v03AssertAccept_(result.success_count === 3, 'expected 3 successful bounded sources');
     v03AssertAccept_(result.error_count === 2, 'expected 2 source-local negative fixtures');
-    v03AssertAccept_(runs.getLastRow() === beforeRuns + 1,
-      'COLLECTION_RUNS must append exactly one row');
 
-    const rows = v03TestObjects_(state);
+    const freshRuns = v03TestFreshObjects_(COLLECTOR_V03.RUN_SHEET);
+    v03AssertAccept_(freshRuns.length === beforeRuns + 1,
+      'COLLECTION_RUNS must append exactly one row');
+    v03AssertAccept_(String(freshRuns[freshRuns.length-1].run_id) === String(result.run_id),
+      'fresh run readback must match returned run_id');
+
+    const rows = v03TestFreshObjects_(COLLECTOR_V03.STATE_SHEET);
     const arch = v03TestUnique_(rows, 'STATE:T-FILE-ARCH');
     v03AssertAccept_(arch.collection_status === 'SUCCESS' && arch.stale_state === 'FRESH',
       'exact FILE source did not become FRESH/SUCCESS');
@@ -130,6 +138,7 @@ function runCollectorV03Acceptance() {
       'ambiguous route did not fail closed');
 
     console.log('PASS: v0.3 actual bounded collector acceptance.');
+    console.log('PASS: post-commit assertions used fresh Advanced Sheets API readback.');
     console.log('PASS: actual SOURCES -> DRIVE_STATE -> COLLECTION_RUNS.');
     console.log('PASS: actual MISSING transition only after complete bounded enumeration.');
     console.log('PASS: actual source failure preserved last-known facts, forced UNKNOWN, and did not create MISSING.');
@@ -141,7 +150,24 @@ function runCollectorV03Acceptance() {
     v03TestRestoreSnapshot_(state, archSnapshot);
     v03TestRestoreSnapshot_(state, badSnapshot);
     v03TestDeleteRowsByStateKey_(state, 'STATE:T-FOLDER-FIXTURE:V03-MISSING-SENTINEL');
+    SpreadsheetApp.flush();
   }
+}
+
+function v03TestFreshObjects_(sheetName) {
+  const response = Sheets.Spreadsheets.Values.get(
+    COLLECTOR_V03.TEST_SPREADSHEET_ID,
+    "'" + String(sheetName).replace(/'/g, "''") + "'!A:AZ",
+    {valueRenderOption:'UNFORMATTED_VALUE'}
+  );
+  const values = response.values || [];
+  if (!values.length) return [];
+  const header = values[0].map(String);
+  return values.slice(1).map((row,i) => {
+    const obj = {__row:i+2};
+    header.forEach((h,j) => obj[h] = row[j] === undefined ? '' : row[j]);
+    return obj;
+  }).filter(r => Object.keys(r).some(k => k !== '__row' && r[k] !== ''));
 }
 
 function v03TestObjects_(sheet) {

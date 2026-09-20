@@ -51,6 +51,8 @@ if (/v03LooksNotFound_/.test(collector)) throw new Error('unsafe 404-to-MISSING 
 if (!collectorAcceptance.includes('V03_SENTINEL_CLASS')) throw new Error('acceptance must seed its own Judge sentinel');
 if (!collectorAcceptance.includes('finally')) throw new Error('acceptance cleanup/finally missing');
 if (!collectorAcceptance.includes('v03TestDeleteRowsByStateKey_')) throw new Error('acceptance sentinel cleanup helper missing');
+if (!collectorAcceptance.includes('Sheets.Spreadsheets.Values.get')) throw new Error('acceptance fresh Sheets API readback missing');
+if (!collectorAcceptance.includes('post-commit assertions used fresh Advanced Sheets API readback')) throw new Error('fresh-read acceptance evidence log missing');
 
 const requiredTestId = '1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0';
 if (!collector.includes(requiredTestId)) throw new Error('collector must remain pinned to dedicated TEST spreadsheet');
