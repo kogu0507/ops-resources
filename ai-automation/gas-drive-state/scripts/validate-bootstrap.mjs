@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import vm from 'node:vm';
 
 const root = 'ai-automation/gas-drive-state';
 const required = [
@@ -29,10 +30,20 @@ const acceptance = fs.readFileSync(`${root}/src/Acceptance.gs`, 'utf8');
 const collector = fs.readFileSync(`${root}/src/Collector.gs`, 'utf8');
 const collectorAcceptance = fs.readFileSync(`${root}/src/CollectorAcceptance.gs`, 'utf8');
 
+for (const [name, source] of [
+  ['Smoke.gs', smoke],
+  ['Acceptance.gs', acceptance],
+  ['Collector.gs', collector],
+  ['CollectorAcceptance.gs', collectorAcceptance]
+]) {
+  new vm.Script(source, {filename:name});
+}
+
 if (!smoke.includes('HUMAN GATE REQUIRED') || !acceptance.includes('HUMAN GATE REQUIRED')) throw new Error('production trigger guard missing');
 if (!acceptance.includes('runIntegratedAcceptanceTest')) throw new Error('integrated acceptance entrypoint missing');
 if (!collector.includes('runBoundedTestCollectorV03')) throw new Error('v0.3 collector entrypoint missing');
 if (!collectorAcceptance.includes('runCollectorV03Acceptance')) throw new Error('v0.3 acceptance entrypoint missing');
+if (!collector.includes('v03FailureTargets_')) throw new Error('source-wide failure freshness guard missing');
 
 const requiredTestId = '1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0';
 if (!collector.includes(requiredTestId)) throw new Error('collector must remain pinned to dedicated TEST spreadsheet');
