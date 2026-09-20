@@ -10,6 +10,7 @@ const required = [
   `${root}/src/Acceptance.gs`,
   `${root}/src/Collector.gs`,
   `${root}/src/CollectorAcceptance.gs`,
+  `${root}/src/LockProbe.gs`,
   `${root}/scripts/validate-deploy-target.mjs`,
   '.github/workflows/gas-dev-deploy.yml',
   '.github/workflows/gas-prod-deploy.yml.disabled'
@@ -30,12 +31,14 @@ const smoke = fs.readFileSync(`${root}/src/Smoke.gs`, 'utf8');
 const acceptance = fs.readFileSync(`${root}/src/Acceptance.gs`, 'utf8');
 const collector = fs.readFileSync(`${root}/src/Collector.gs`, 'utf8');
 const collectorAcceptance = fs.readFileSync(`${root}/src/CollectorAcceptance.gs`, 'utf8');
+const lockProbe = fs.readFileSync(`${root}/src/LockProbe.gs`, 'utf8');
 
 for (const [name, source] of [
   ['Smoke.gs', smoke],
   ['Acceptance.gs', acceptance],
   ['Collector.gs', collector],
-  ['CollectorAcceptance.gs', collectorAcceptance]
+  ['CollectorAcceptance.gs', collectorAcceptance],
+  ['LockProbe.gs', lockProbe]
 ]) {
   new vm.Script(source, {filename:name});
 }
@@ -44,6 +47,10 @@ if (!smoke.includes('HUMAN GATE REQUIRED') || !acceptance.includes('HUMAN GATE R
 if (!acceptance.includes('runIntegratedAcceptanceTest')) throw new Error('integrated acceptance entrypoint missing');
 if (!collector.includes('runBoundedTestCollectorV03')) throw new Error('v0.3 collector entrypoint missing');
 if (!collectorAcceptance.includes('runCollectorV03Acceptance')) throw new Error('v0.3 acceptance entrypoint missing');
+if (!lockProbe.includes('holdCollectorLockForOverlapProbe')) throw new Error('lock holder probe entrypoint missing');
+if (!lockProbe.includes('runCollectorLockContenderProbe')) throw new Error('lock contender probe entrypoint missing');
+if (!lockProbe.includes("run_status !== 'SKIPPED'") || !lockProbe.includes("reason !== 'LOCK_HELD'")) throw new Error('lock contender assertion missing');
+if (/ScriptApp\.newTrigger|\.create\(\)/.test(lockProbe)) throw new Error('trigger creation forbidden in lock probe');
 if (!collector.includes('v03FailureTargets_')) throw new Error('source-wide failure freshness guard missing');
 if (!collector.includes('Sheets.Spreadsheets.batchUpdate')) throw new Error('run-level atomic Sheets batchUpdate missing');
 if (!collector.includes('NOT_FOUND_OR_INACCESSIBLE')) throw new Error('ambiguous Drive 404/access-loss guard missing');
