@@ -22,7 +22,8 @@ const allowedFiles = new Set([
   path.resolve(root, 'Acceptance.gs'),
   path.resolve(root, 'Collector.gs'),
   path.resolve(root, 'CollectorAcceptance.gs'),
-  path.resolve(root, 'LockProbe.gs')
+  path.resolve(root, 'LockProbe.gs'),
+  path.resolve(root, 'MechanicalHealth.gs')
 ]);
 
 const discovered = [];
