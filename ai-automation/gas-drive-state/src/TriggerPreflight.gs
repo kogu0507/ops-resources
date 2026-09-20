@@ -104,6 +104,6 @@ function runMechanicalM2BTriggerAcceptance() {
   return result;
 }
 
-function installProductionTrigger() {
+function installMechanicalProductionTrigger() {
   throw new Error('HUMAN GATE REQUIRED: production trigger installation disabled');
 }
