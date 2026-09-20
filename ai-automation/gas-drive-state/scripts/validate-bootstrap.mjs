@@ -4,9 +4,10 @@ const root = 'ai-automation/gas-drive-state';
 const required = [
   `${root}/README.md`,
   `${root}/package.json`,
-  `${root}/appsscript.json`,
+  `${root}/src/appsscript.json`,
   `${root}/src/Smoke.gs`,
   `${root}/src/Acceptance.gs`,
+  `${root}/scripts/validate-deploy-target.mjs`,
   '.github/workflows/gas-dev-deploy.yml',
   '.github/workflows/gas-prod-deploy.yml.disabled'
 ];
@@ -16,7 +17,7 @@ for (const file of required) {
 }
 
 JSON.parse(fs.readFileSync(`${root}/package.json`, 'utf8'));
-const manifest = JSON.parse(fs.readFileSync(`${root}/appsscript.json`, 'utf8'));
+const manifest = JSON.parse(fs.readFileSync(`${root}/src/appsscript.json`, 'utf8'));
 
 const scopes = new Set(manifest.oauthScopes || []);
 for (const requiredScope of [
@@ -40,9 +41,23 @@ if (!acceptance.includes('runIntegratedAcceptanceTest')) {
   throw new Error('integrated acceptance entrypoint missing');
 }
 
+if (fs.existsSync(`${root}/appsscript.json`)) {
+  throw new Error('manifest must exist only under fixed rootDir src/');
+}
 if (fs.existsSync('.github/workflows/gas-prod-deploy.yml')) {
   throw new Error('production deploy workflow must remain disabled during bootstrap');
 }
+
+const devWorkflow = fs.readFileSync('.github/workflows/gas-dev-deploy.yml','utf8');
+if (!devWorkflow.includes('environment: development')) throw new Error('development Environment boundary missing');
+if (!devWorkflow.includes('CLASPRC_JSON_DEV')) throw new Error('Dev-specific credential secret missing');
+if (!devWorkflow.includes('EXPECTED_DEV_SCRIPT_ID')) throw new Error('independent Dev target variable missing');
+if (!devWorkflow.includes('validate-deploy-target.mjs')) throw new Error('Dev exact-target preflight missing');
+
+const prodWorkflow = fs.readFileSync('.github/workflows/gas-prod-deploy.yml.disabled','utf8');
+if (!prodWorkflow.includes('environment: production')) throw new Error('production Environment boundary missing');
+if (!prodWorkflow.includes('CLASPRC_JSON_PROD')) throw new Error('Prod-specific credential secret missing');
+if (!prodWorkflow.includes('EXPECTED_PROD_SCRIPT_ID')) throw new Error('independent Prod target variable missing');
 
 const trackedSensitive = [
   `${root}/.clasprc.json`,
