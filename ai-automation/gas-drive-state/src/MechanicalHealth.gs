@@ -94,3 +94,16 @@ function runMechanicalHealthCheck(input) {
     }
   };
 }
+
+
+function logMechanicalCanonicalVersionCheck() {
+  const result = checkMechanicalCanonicalVersion();
+  console.log(JSON.stringify(result));
+  return result;
+}
+
+function logMechanicalExactDriveRead(fileId) {
+  const result = readExactDriveMetadata(fileId);
+  console.log(JSON.stringify(result));
+  return result;
+}
