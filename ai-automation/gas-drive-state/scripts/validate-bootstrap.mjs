@@ -24,6 +24,7 @@ for (const requiredScope of ['https://www.googleapis.com/auth/drive.readonly','h
 }
 const advanced = manifest?.dependencies?.enabledAdvancedServices || [];
 if (!advanced.some(x => x.userSymbol === 'Drive' && x.serviceId === 'drive' && x.version === 'v3')) throw new Error('Drive v3 Advanced Service declaration missing');
+if (!advanced.some(x => x.userSymbol === 'Sheets' && x.serviceId === 'sheets' && x.version === 'v4')) throw new Error('Sheets v4 Advanced Service declaration missing');
 
 const smoke = fs.readFileSync(`${root}/src/Smoke.gs`, 'utf8');
 const acceptance = fs.readFileSync(`${root}/src/Acceptance.gs`, 'utf8');
@@ -44,6 +45,12 @@ if (!acceptance.includes('runIntegratedAcceptanceTest')) throw new Error('integr
 if (!collector.includes('runBoundedTestCollectorV03')) throw new Error('v0.3 collector entrypoint missing');
 if (!collectorAcceptance.includes('runCollectorV03Acceptance')) throw new Error('v0.3 acceptance entrypoint missing');
 if (!collector.includes('v03FailureTargets_')) throw new Error('source-wide failure freshness guard missing');
+if (!collector.includes('Sheets.Spreadsheets.batchUpdate')) throw new Error('run-level atomic Sheets batchUpdate missing');
+if (!collector.includes('NOT_FOUND_OR_INACCESSIBLE')) throw new Error('ambiguous Drive 404/access-loss guard missing');
+if (/v03LooksNotFound_/.test(collector)) throw new Error('unsafe 404-to-MISSING helper must not exist');
+if (!collectorAcceptance.includes('V03_SENTINEL_CLASS')) throw new Error('acceptance must seed its own Judge sentinel');
+if (!collectorAcceptance.includes('finally')) throw new Error('acceptance cleanup/finally missing');
+if (!collectorAcceptance.includes('v03TestDeleteRowsByStateKey_')) throw new Error('acceptance sentinel cleanup helper missing');
 
 const requiredTestId = '1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0';
 if (!collector.includes(requiredTestId)) throw new Error('collector must remain pinned to dedicated TEST spreadsheet');
