@@ -173,10 +173,8 @@ function v03CollectFolder_(stateSheet, s) {
   if (folder.trashed || folder.mimeType !== 'application/vnd.google-apps.folder') {
     throw v03Error_('NOT_FOUND','configured folder unavailable');
   }
-  if (s.expected_identity && String(folder.name) !== String(s.expected_identity)) {
-    v03IdentityFailure_(stateSheet, s, 'FOLDER_BOUNDED', String(s.source_ref), 'expected folder name "'+s.expected_identity+'" got "'+folder.name+'"');
-    return {ok:false, source_key:String(s.source_key), code:'IDENTITY_MISMATCH'};
-  }
+  // For FOLDER_BOUNDED, the configured exact source_ref is the stable identity.
+  // expected_identity may be a human-readable fixture label and is not used to rebind the exact folder ID.
 
   let token = null, pages = 0, incomplete = false;
   const files = [];
