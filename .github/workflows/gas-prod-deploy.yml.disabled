@@ -24,17 +24,26 @@ jobs:
         with:
           node-version: "20"
       - run: npm install --no-audit --no-fund
-      - name: Require production credentials
+      - name: Require production-only credential and exact target configuration
         env:
-          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          CLASPRC_JSON_PROD: ${{ secrets.CLASPRC_JSON_PROD }}
           CLASP_JSON_PROD: ${{ secrets.CLASP_JSON_PROD }}
+          EXPECTED_PROD_SCRIPT_ID: ${{ vars.EXPECTED_PROD_SCRIPT_ID }}
         run: |
-          test -n "$CLASPRC_JSON" || exit 1
+          test -n "$CLASPRC_JSON_PROD" || exit 1
           test -n "$CLASP_JSON_PROD" || exit 1
-          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          test -n "$EXPECTED_PROD_SCRIPT_ID" || exit 1
+          printf '%s' "$CLASPRC_JSON_PROD" > "$HOME/.clasprc.json"
           printf '%s' "$CLASP_JSON_PROD" > .clasp.prod.json
           chmod 600 "$HOME/.clasprc.json" .clasp.prod.json
-      - run: npx clasp status --project .clasp.prod.json
-      - run: npx clasp push --force --project .clasp.prod.json
+      - name: Exact production target and push allowlist preflight
+        env:
+          EXPECTED_SCRIPT_ID: ${{ vars.EXPECTED_PROD_SCRIPT_ID }}
+          EXPECTED_ROOT_DIR: src
+        run: node scripts/validate-deploy-target.mjs .clasp.prod.json
+      - name: Inspect clasp status after independent target verification
+        run: npx clasp status --project .clasp.prod.json
+      - name: Push source to exact Prod target
+        run: npx clasp push --force --project .clasp.prod.json
       - if: always()
         run: rm -f "$HOME/.clasprc.json" .clasp.prod.json
