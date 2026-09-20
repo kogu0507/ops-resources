@@ -1,12 +1,12 @@
 /**
  * GAS Mechanical Layer M2-A candidate.
  * Read-only by design: public GitHub version check + exact Drive metadata checks.
- * No Drive mutation. No trigger creation.
+ * No Drive mutation. No trigger creation.\n * Dev candidate URL is branch-pinned for pre-merge verification; Production must use an approved commit/ref.
  */
 const MECHANICAL_LAYER_BUILD = Object.freeze({
   component: 'ai-automation-drive-state-mechanical',
   version: 'm2a-0.1.0',
-  versionUrl: 'https://raw.githubusercontent.com/kogu0507/ops-resources/main/ai-automation/gas-drive-state/version.json'
+  versionUrl: 'https://raw.githubusercontent.com/kogu0507/ops-resources/ai-auto-gas-mechanical-m2a/ai-automation/gas-drive-state/version.json'
 });
 
 function getMechanicalLayerBuildInfo() {
