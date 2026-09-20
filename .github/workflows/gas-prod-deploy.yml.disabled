@@ -1,0 +1,49 @@
+# Intentionally disabled. Rename to .yml only after the production Human Gate.
+name: GAS Prod Deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gas-drive-state-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy-prod:
+    environment: production
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-automation/gas-drive-state
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install --no-audit --no-fund
+      - name: Require production-only credential and exact target configuration
+        env:
+          CLASPRC_JSON_PROD: ${{ secrets.CLASPRC_JSON_PROD }}
+          CLASP_JSON_PROD: ${{ secrets.CLASP_JSON_PROD }}
+          EXPECTED_PROD_SCRIPT_ID: ${{ vars.EXPECTED_PROD_SCRIPT_ID }}
+        run: |
+          test -n "$CLASPRC_JSON_PROD" || exit 1
+          test -n "$CLASP_JSON_PROD" || exit 1
+          test -n "$EXPECTED_PROD_SCRIPT_ID" || exit 1
+          printf '%s' "$CLASPRC_JSON_PROD" > "$HOME/.clasprc.json"
+          printf '%s' "$CLASP_JSON_PROD" > .clasp.prod.json
+          chmod 600 "$HOME/.clasprc.json" .clasp.prod.json
+      - name: Exact production target and push allowlist preflight
+        env:
+          EXPECTED_SCRIPT_ID: ${{ vars.EXPECTED_PROD_SCRIPT_ID }}
+          EXPECTED_ROOT_DIR: src
+        run: node scripts/validate-deploy-target.mjs .clasp.prod.json
+      - name: Inspect clasp status after independent target verification
+        run: npx clasp status --project .clasp.prod.json
+      - name: Push source to exact Prod target
+        run: npx clasp push --force --project .clasp.prod.json
+      - if: always()
+        run: rm -f "$HOME/.clasprc.json" .clasp.prod.json
