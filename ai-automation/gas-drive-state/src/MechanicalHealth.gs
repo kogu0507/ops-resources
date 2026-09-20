@@ -107,3 +107,11 @@ function logMechanicalExactDriveRead(fileId) {
   console.log(JSON.stringify(result));
   return result;
 }
+
+
+function logMechanicalExactDriveReadTest() {
+  const testFileId = '1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0';
+  const result = readExactDriveMetadata(testFileId);
+  console.log(JSON.stringify(result));
+  return result;
+}
