@@ -8,28 +8,38 @@ ChatGPT -> GitHub branch/PR -> CI checks -> manual Dev deploy -> Dev verificatio
 
 ## Safety
 
-- No production Apps Script ID or OAuth token is committed.
-- `.clasprc.json` and clasp project mappings are supplied only as GitHub Secrets.
-- Dev deploy is manual (`workflow_dispatch`) during bootstrap.
-- Prod deploy workflow is stored disabled until a later Human Gate.
-- Deployments use `clasp push`; they replace Apps Script project source, so target identity must be checked before enabling secrets.
-- Rollback is a Git commit/ref redeploy, followed by readback/verification.
+- No Apps Script target ID or OAuth token is committed.
+- Dev uses GitHub Environment `development`; Prod uses `production`.
+- Dev and Prod use separate clasp credential/mapping secret names.
+- Exact target identity is checked against an independently configured Environment variable before any `clasp push`.
+- Clasp `rootDir` is fixed to `src`.
+- Deploy preflight rejects files outside the explicit bootstrap push allowlist.
+- Dev deploy is manual (`workflow_dispatch`).
+- Prod deploy workflow remains `.disabled` until a later Human Gate.
+- `clasp push` replaces the whole target project source, so exact-target verification precedes status/push.
+- Rollback is a Git commit/ref redeploy to the same independently verified target, followed by verification/readback.
 
-## Required one-time setup
+## Required one-time Dev setup
 
-1. Enable Apps Script API for the Google account used by clasp.
-2. Create/choose a dedicated Dev Apps Script project.
-3. Run `clasp login` once on a trusted local machine and capture `~/.clasprc.json`.
-4. Add GitHub Actions secrets:
-   - `CLASPRC_JSON`: contents of `~/.clasprc.json`
-   - `CLASP_JSON_DEV`: JSON containing the exact Dev `scriptId` and `rootDir`.
-5. Run the Dev deployment workflow manually and verify the exact target.
-6. Prod credentials/mapping remain unset until Human Gate.
+Create GitHub Environment `development` and configure:
+- secret `CLASPRC_JSON_DEV`
+- secret `CLASP_JSON_DEV` = exactly `{"scriptId":"<DEV_SCRIPT_ID>","rootDir":"src"}`
+- variable `EXPECTED_DEV_SCRIPT_ID` = Dev Script ID entered independently from the mapping secret
+
+The Dev credential must be a Dev-only credential profile. Production credentials are not created during bootstrap.
+
+## Production isolation
+
+Before enabling production:
+- create/use a separate production deployment credential profile, preferably a separate Google deployment identity whose access is limited to the Prod Apps Script project;
+- configure only Environment `production` with `CLASPRC_JSON_PROD`, `CLASP_JSON_PROD`, and `EXPECTED_PROD_SCRIPT_ID`;
+- require the separate Production Human Gate;
+- add post-push verification/readback before activation.
 
 ## Repository layout
 
-- `src/` — Apps Script source.
-- `appsscript.json` — manifest.
-- `.github/workflows/gas-dev-deploy.yml` — manual Dev deploy.
-- `.github/workflows/gas-prod-deploy.yml.disabled` — non-runnable production template.
-- `.claspignore` — deploy allowlist boundary.
+- `src/` — only files eligible for Apps Script push during bootstrap.
+- `src/appsscript.json` — manifest; clasp `rootDir` is fixed to `src`.
+- `scripts/validate-deploy-target.mjs` — exact target/rootDir/push allowlist guard.
+- `.github/workflows/gas-dev-deploy.yml` — manual Dev deploy using `development`.
+- `.github/workflows/gas-prod-deploy.yml.disabled` — non-runnable Prod template using `production`.
