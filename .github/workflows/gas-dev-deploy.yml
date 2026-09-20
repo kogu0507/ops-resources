@@ -12,6 +12,7 @@ concurrency:
 
 jobs:
   deploy-dev:
+    environment: development
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -19,39 +20,38 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-
       - name: Install clasp
         run: npm install --no-audit --no-fund
-
-      - name: Validate required secrets
+      - name: Validate required development environment configuration
         env:
-          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          CLASPRC_JSON_DEV: ${{ secrets.CLASPRC_JSON_DEV }}
           CLASP_JSON_DEV: ${{ secrets.CLASP_JSON_DEV }}
+          EXPECTED_DEV_SCRIPT_ID: ${{ vars.EXPECTED_DEV_SCRIPT_ID }}
         run: |
-          test -n "$CLASPRC_JSON" || (echo "CLASPRC_JSON missing" && exit 1)
+          test -n "$CLASPRC_JSON_DEV" || (echo "CLASPRC_JSON_DEV missing" && exit 1)
           test -n "$CLASP_JSON_DEV" || (echo "CLASP_JSON_DEV missing" && exit 1)
-
-      - name: Materialize clasp credentials
+          test -n "$EXPECTED_DEV_SCRIPT_ID" || (echo "EXPECTED_DEV_SCRIPT_ID missing" && exit 1)
+      - name: Materialize development-only clasp credential and project mapping
         env:
-          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          CLASPRC_JSON_DEV: ${{ secrets.CLASPRC_JSON_DEV }}
           CLASP_JSON_DEV: ${{ secrets.CLASP_JSON_DEV }}
         run: |
-          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          printf '%s' "$CLASPRC_JSON_DEV" > "$HOME/.clasprc.json"
           printf '%s' "$CLASP_JSON_DEV" > .clasp.dev.json
           chmod 600 "$HOME/.clasprc.json" .clasp.dev.json
-
-      - name: Inspect target mapping
+      - name: Exact target and push allowlist preflight
+        env:
+          EXPECTED_SCRIPT_ID: ${{ vars.EXPECTED_DEV_SCRIPT_ID }}
+          EXPECTED_ROOT_DIR: src
+        run: node scripts/validate-deploy-target.mjs .clasp.dev.json
+      - name: Inspect clasp status after independent target verification
         run: npx clasp status --project .clasp.dev.json
-
-      - name: Push source to Dev
+      - name: Push source to exact Dev target
         run: npx clasp push --force --project .clasp.dev.json
-
       - name: Remove temporary credential files
         if: always()
-        run: |
-          rm -f "$HOME/.clasprc.json" .clasp.dev.json
+        run: rm -f "$HOME/.clasprc.json" .clasp.dev.json
