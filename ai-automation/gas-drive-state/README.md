@@ -43,3 +43,29 @@ Before enabling production:
 - `scripts/validate-deploy-target.mjs` — exact target/rootDir/push allowlist guard.
 - `.github/workflows/gas-dev-deploy.yml` — manual Dev deploy using `development`.
 - `.github/workflows/gas-prod-deploy.yml.disabled` — non-runnable Prod template using `production`.
+
+
+## Dev implementation v0.3
+
+The next bounded TEST iteration adds a real collector path, still pinned to the dedicated TEST spreadsheet.
+
+Entrypoints:
+- `runBoundedTestCollectorV03()` — reads enabled TEST `SOURCES`, collects bounded Drive/Sheet state, updates only Collector-owned `DRIVE_STATE` fields, and appends one `COLLECTION_RUNS` row.
+- `runCollectorV03Acceptance()` — seeds bounded TEST sentinels, invokes the real collector, and verifies actual source failure freshness plus an actual MISSING transition after a complete bounded folder enumeration.
+
+Supported v0.3 TEST source kinds:
+- exact `FILE` metadata
+- bounded `SHEET_RANGE`
+- non-recursive `FOLDER_BOUNDED`
+- synthetic ambiguous `REGISTRY` negative fixture only
+
+Safety:
+- write target is hard-pinned to TEST spreadsheet `1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0`
+- no trigger creation
+- no production Sheet writes
+- exact Drive IDs / bounded ranges only
+- source-local fail-closed behavior
+- complete folder enumeration required before MISSING
+- newer source failure forces UNKNOWN while retaining last-known facts
+- Judge-owned fields are never included in Collector patch allowlist
+- concurrent LockService overlap still requires a separate empirical two-invocation probe before production scheduling
