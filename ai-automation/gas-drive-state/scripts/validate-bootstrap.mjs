@@ -11,6 +11,8 @@ const required = [
   `${root}/src/Collector.gs`,
   `${root}/src/CollectorAcceptance.gs`,
   `${root}/src/LockProbe.gs`,
+  `${root}/src/MechanicalHealth.gs`,
+  `${root}/version.json`,
   `${root}/scripts/validate-deploy-target.mjs`,
   '.github/workflows/gas-dev-deploy.yml',
   '.github/workflows/gas-prod-deploy.yml.disabled'
@@ -20,7 +22,7 @@ for (const file of required) if (!fs.existsSync(file)) throw new Error(`missing 
 JSON.parse(fs.readFileSync(`${root}/package.json`, 'utf8'));
 const manifest = JSON.parse(fs.readFileSync(`${root}/src/appsscript.json`, 'utf8'));
 const scopes = new Set(manifest.oauthScopes || []);
-for (const requiredScope of ['https://www.googleapis.com/auth/drive.readonly','https://www.googleapis.com/auth/spreadsheets']) {
+for (const requiredScope of ['https://www.googleapis.com/auth/drive.readonly','https://www.googleapis.com/auth/spreadsheets','https://www.googleapis.com/auth/script.external_request']) {
   if (!scopes.has(requiredScope)) throw new Error(`missing required OAuth scope: ${requiredScope}`);
 }
 const advanced = manifest?.dependencies?.enabledAdvancedServices || [];
@@ -32,13 +34,16 @@ const acceptance = fs.readFileSync(`${root}/src/Acceptance.gs`, 'utf8');
 const collector = fs.readFileSync(`${root}/src/Collector.gs`, 'utf8');
 const collectorAcceptance = fs.readFileSync(`${root}/src/CollectorAcceptance.gs`, 'utf8');
 const lockProbe = fs.readFileSync(`${root}/src/LockProbe.gs`, 'utf8');
+const mechanicalHealth = fs.readFileSync(`${root}/src/MechanicalHealth.gs`, 'utf8');
+const mechanicalVersion = JSON.parse(fs.readFileSync(`${root}/version.json`, 'utf8'));
 
 for (const [name, source] of [
   ['Smoke.gs', smoke],
   ['Acceptance.gs', acceptance],
   ['Collector.gs', collector],
   ['CollectorAcceptance.gs', collectorAcceptance],
-  ['LockProbe.gs', lockProbe]
+  ['LockProbe.gs', lockProbe],
+  ['MechanicalHealth.gs', mechanicalHealth]
 ]) {
   new vm.Script(source, {filename:name});
 }
@@ -50,6 +55,15 @@ if (!collectorAcceptance.includes('runCollectorV03Acceptance')) throw new Error(
 if (!lockProbe.includes('holdCollectorLockForOverlapProbe')) throw new Error('lock holder probe entrypoint missing');
 if (!lockProbe.includes('runCollectorLockContenderProbe')) throw new Error('lock contender probe entrypoint missing');
 if (!lockProbe.includes("run_status !== 'SKIPPED'") || !lockProbe.includes("reason !== 'LOCK_HELD'")) throw new Error('lock contender assertion missing');
+if (!mechanicalHealth.includes('checkMechanicalCanonicalVersion')) throw new Error('M2-A version check entrypoint missing');
+if (!mechanicalHealth.includes('readExactDriveMetadata')) throw new Error('M2-A exact Drive read entrypoint missing');
+if (!mechanicalHealth.includes('runMechanicalHealthCheck')) throw new Error('M2-A health entrypoint missing');
+if (!mechanicalHealth.includes('runMechanicalM2AAcceptance')) throw new Error('M2-A consolidated acceptance entrypoint missing');
+if (!mechanicalHealth.includes('ai-auto-gas-mechanical-m2a/ai-automation/gas-drive-state/version.json')) throw new Error('M2-A Dev version URL must be branch-pinned before merge');
+if (!mechanicalHealth.includes("status: 'MATCH'") && !mechanicalHealth.includes("'MATCH' : 'UPDATE_AVAILABLE'")) throw new Error('M2-A version status contract missing');
+if (/ScriptApp\.newTrigger|Drive\.Files\.(create|copy|update|delete|remove)/.test(mechanicalHealth)) throw new Error('M2-A source must remain read-only and trigger-free');
+const versionMatch = mechanicalHealth.match(/version:\s*'([^']+)'/);
+if (!versionMatch || mechanicalVersion.version !== versionMatch[1]) throw new Error('M2-A runtime/version.json mismatch');
 if (/ScriptApp\.newTrigger|\.create\(\)/.test(lockProbe)) throw new Error('trigger creation forbidden in lock probe');
 if (!collector.includes('v03FailureTargets_')) throw new Error('source-wide failure freshness guard missing');
 if (!collector.includes('Sheets.Spreadsheets.batchUpdate')) throw new Error('run-level atomic Sheets batchUpdate missing');

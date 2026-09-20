@@ -116,3 +116,23 @@ Before any Production materialization or Human Gate, perform one end-to-end prer
 - expected number of Human Gates and manual actions
 
 No implementation should begin if an unavoidable prerequisite is still likely to surface later.
+
+## M2-A candidate — read-only Mechanical Layer
+
+This branch adds a bounded read-only candidate only:
+- public GitHub version marker fetch with no GitHub credential
+- runtime-vs-canonical version status: MATCH / UPDATE_AVAILABLE / CHECK_FAILED
+- exact Drive metadata reads only
+- bounded composite Health Check return object
+
+Authorization impact:
+- adds Apps Script scope `script.external_request` for public GitHub fetches
+- does not add Drive write scope
+- does not add trigger-creation scope
+- Dev deployment may therefore require Google reauthorization before execution
+
+Still excluded:
+- Drive create/copy/update/delete
+- trigger creation
+- automatic Apps Script source self-update
+- Production deployment or scheduling
