@@ -316,8 +316,10 @@ function v03UpsertState_(sheet, identity, patch) {
   if (found) {
     if (String(found.source_key) !== String(identity.source_key) ||
         String(found.entity_kind) !== String(identity.entity_kind) ||
-        String(found.entity_key) !== String(identity.entity_key)) {
-      throw v03Error_('IDENTITY_MISMATCH','stable state_key cannot be repurposed: '+identity.state_key);
+        String(found.entity_key) !== String(identity.entity_key) ||
+        String(found.source_ref||'') !== String(identity.source_ref||'') ||
+        String(found.authority_ref||'') !== String(identity.authority_ref||'')) {
+      throw v03Error_('IDENTITY_MISMATCH','stable state identity cannot be repurposed: '+identity.state_key);
     }
     v03PatchExisting_(sheet, found.__row, patch);
     return;
