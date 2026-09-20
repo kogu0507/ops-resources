@@ -58,6 +58,7 @@ if (!lockProbe.includes("run_status !== 'SKIPPED'") || !lockProbe.includes("reas
 if (!mechanicalHealth.includes('checkMechanicalCanonicalVersion')) throw new Error('M2-A version check entrypoint missing');
 if (!mechanicalHealth.includes('readExactDriveMetadata')) throw new Error('M2-A exact Drive read entrypoint missing');
 if (!mechanicalHealth.includes('runMechanicalHealthCheck')) throw new Error('M2-A health entrypoint missing');
+if (!mechanicalHealth.includes('ai-auto-gas-mechanical-m2a/ai-automation/gas-drive-state/version.json')) throw new Error('M2-A Dev version URL must be branch-pinned before merge');
 if (!mechanicalHealth.includes("status: 'MATCH'") && !mechanicalHealth.includes("'MATCH' : 'UPDATE_AVAILABLE'")) throw new Error('M2-A version status contract missing');
 if (/ScriptApp\.newTrigger|Drive\.Files\.(create|copy|update|delete|remove)/.test(mechanicalHealth)) throw new Error('M2-A source must remain read-only and trigger-free');
 const versionMatch = mechanicalHealth.match(/version:\s*'([^']+)'/);
