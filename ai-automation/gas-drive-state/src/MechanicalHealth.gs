@@ -115,3 +115,37 @@ function logMechanicalExactDriveReadTest() {
   console.log(JSON.stringify(result));
   return result;
 }
+
+
+function runMechanicalM2AAcceptance() {
+  const knownTestFileId = '1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0';
+  const impossibleFileId = 'M2A_INTENTIONALLY_INVALID_FILE_ID';
+
+  const version = checkMechanicalCanonicalVersion();
+  const known = readExactDriveMetadata(knownTestFileId);
+  const negative = readExactDriveMetadata(impossibleFileId);
+  const health = runMechanicalHealthCheck({driveFileIds: [knownTestFileId]});
+
+  const checks = {
+    versionMatch: version.status === 'MATCH',
+    exactReadPass: known.status === 'PASS' && known.file && known.file.id === knownTestFileId,
+    negativeReadFailsClosed: negative.status === 'READ_FAILED',
+    healthPass: health.status === 'PASS' &&
+      health.versionCheck &&
+      health.versionCheck.status === 'MATCH' &&
+      health.summary &&
+      health.summary.failedDriveChecks === 0
+  };
+
+  const pass = Object.keys(checks).every(key => checks[key] === true);
+  const result = {
+    status: pass ? 'PASS' : 'FAIL',
+    checks,
+    version,
+    exactRead: known,
+    negativeRead: negative,
+    health
+  };
+  console.log(JSON.stringify(result));
+  return result;
+}
