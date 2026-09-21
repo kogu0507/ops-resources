@@ -4,7 +4,7 @@ Google Drive is the project authority. This repository is the technical source/d
 
 ## Current status — 2026-09-20
 
-**Operational baseline: Dev-only, verified, Production frozen.**
+**Operational baseline: Dev verified; Production targets materialized but runtime remains inert.**
 
 Verified Dev path:
 - GitHub main -> manual GitHub Actions -> clasp -> exact Dev Apps Script target
@@ -19,7 +19,8 @@ Verified Dev path:
 
 No Production collector is running.
 No recurring Drive-state trigger exists.
-Do not enable the disabled Production workflow without a new explicit Human Gate.
+Production spreadsheet + standalone Apps Script target now exist under the same intended owner, but no Production source has been deployed and no trigger exists.
+Do not enable the disabled Production workflow; current preferred path remains manual exact-target Production materialization with readback verification.
 
 ## Known targets
 
@@ -29,12 +30,18 @@ Dev Apps Script:
 Dedicated TEST spreadsheet:
 - ID: `1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0`
 
-Frozen, never-run Production observation spreadsheet:
+Current Production targets — materialized 2026-09-22, still inert:
+- spreadsheet title: `AI Automation Drive-state v0.1`
+- spreadsheet ID: `19t_taz3ss_HXRCOncPv1AXhQjjmCOwf0EPh1g9Q3wVY`
+- Apps Script ID: `1r3y9O0_Du-QAoxKiJRP5nCSnLzrMo5IFTV3m1ex2KsvQCFNR5d0qoLBL`
+- both owned by the same intended existing Google account
+- no Production source deployed yet
+- no Production run data or recurring trigger yet
+
+Historical frozen Production observation spreadsheet:
 - title: `FROZEN｜AI Automation Drive-state v0.1｜2026-09-20`
 - ID: `1isIOjxGeJ-h0y_KvnWUqg-zzmK5cbvkLjaVJoon2ssU`
-- contains schema + four configured SOURCES only
-- DRIVE_STATE / COLLECTION_RUNS contain no Production run data
-- must remain inert until explicit resume
+- retained as historical inert artifact; not the current Production target
 
 ## Repository layout
 
@@ -64,12 +71,13 @@ Dev deploy remains manual via `workflow_dispatch`.
 
 The earlier Production Pilot P0-A path was frozen after a late prerequisite discovery around credential/account topology.
 
-Freeze means:
-- do not create a Production Apps Script project
-- do not create Production clasp/GitHub credentials
-- do not run the frozen Production spreadsheet
-- do not create a recurring trigger
+Current Production boundary:
+- exact Production targets are now materialized and pinned
+- do not create Production clasp/GitHub credentials by default
+- do not execute the Production collector yet
+- do not create a recurring trigger yet
 - do not broaden source scope
+- Production source update requires exact-target preflight + immediate readback verification
 
 The frozen spreadsheet is preserved only as an inert artifact so the interrupted work is explicit rather than ambiguous.
 
