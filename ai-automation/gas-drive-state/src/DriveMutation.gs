@@ -5,6 +5,7 @@
  */
 const M2C_DRIVE = Object.freeze({
   sourceFileId: '1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0',
+  targetFolderId: '1F7DC2PbwGH02sm7Fo4YbqF8-2juK1wPc',
   testPrefix: 'M2C_TEST_',
   writeScope: 'https://www.googleapis.com/auth/drive.file'
 });
@@ -97,6 +98,43 @@ function trashMechanicalCreatedFile_(fileId) {
   };
 }
 
+function getMechanicalM2CWriteAuthorizationPreflight() {
+  const info = ScriptApp.getAuthorizationInfo(
+    ScriptApp.AuthMode.FULL,
+    [M2C_DRIVE.writeScope]
+  );
+  const status = info.getAuthorizationStatus();
+  const result = {
+    status: String(status),
+    requiredScope: M2C_DRIVE.writeScope,
+    targetFolderId: M2C_DRIVE.targetFolderId
+  };
+
+  if (status !== ScriptApp.AuthorizationStatus.NOT_REQUIRED) {
+    result.preflight = 'AUTH_REQUIRED';
+    console.log(JSON.stringify(result));
+    return result;
+  }
+
+  try {
+    const folder = Drive.Files.get(M2C_DRIVE.targetFolderId, {
+      fields: 'id,name,mimeType,trashed'
+    });
+    const folderOk = folder &&
+      folder.id === M2C_DRIVE.targetFolderId &&
+      folder.mimeType === 'application/vnd.google-apps.folder' &&
+      !folder.trashed;
+    result.folder = folder;
+    result.preflight = folderOk ? 'READY' : 'TARGET_FOLDER_INVALID';
+  } catch (err) {
+    result.preflight = 'TARGET_FOLDER_READ_FAILED';
+    result.reason = String(err && err.message ? err.message : err);
+  }
+
+  console.log(JSON.stringify(result));
+  return result;
+}
+
 function runMechanicalM2CAcceptance() {
   ScriptApp.requireScopes(
     ScriptApp.AuthMode.FULL,
@@ -113,7 +151,8 @@ function runMechanicalM2CAcceptance() {
 
   try {
     created = createMechanicalDriveFile({
-      name: M2C_DRIVE.testPrefix + 'CREATE_' + stamp
+      name: M2C_DRIVE.testPrefix + 'CREATE_' + stamp,
+      parentId: M2C_DRIVE.targetFolderId
     });
     createdId = created.createdFileId || (created.file && created.file.id) || null;
     if (createdId) console.log(JSON.stringify({event: 'M2C_CREATED_ARTIFACT', fileId: createdId}));
@@ -122,7 +161,8 @@ function runMechanicalM2CAcceptance() {
     }
 
     copied = copyMechanicalDriveFile(M2C_DRIVE.sourceFileId, {
-      name: M2C_DRIVE.testPrefix + 'COPY_' + stamp
+      name: M2C_DRIVE.testPrefix + 'COPY_' + stamp,
+      parentId: M2C_DRIVE.targetFolderId
     });
     copiedId = copied.copiedFileId || (copied.file && copied.file.id) || null;
     if (copiedId) console.log(JSON.stringify({event: 'M2C_COPIED_ARTIFACT', fileId: copiedId}));
@@ -146,6 +186,7 @@ function runMechanicalM2CAcceptance() {
     status: pass ? 'PASS' : 'FAIL',
     checks,
     sourceFileId: M2C_DRIVE.sourceFileId,
+    targetFolderId: M2C_DRIVE.targetFolderId,
     createdFileId: createdId,
     copiedFileId: copiedId,
     cleanupMode: 'TRASH_ONLY_REVERSIBLE'
