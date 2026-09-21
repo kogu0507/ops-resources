@@ -7,6 +7,7 @@
  * not the pre-existing SpreadsheetApp object, to avoid stale service caches.
  */
 function runCollectorV03Acceptance() {
+  requireDevRuntimeForTestMutation_();
   const ss = SpreadsheetApp.openById(COLLECTOR_V03.TEST_SPREADSHEET_ID);
   const state = ss.getSheetByName(COLLECTOR_V03.STATE_SHEET);
 
