@@ -81,6 +81,7 @@ if (!driveMutation.includes("cleanupMode: 'TRASH_ONLY_REVERSIBLE'")) throw new E
 if (!driveMutation.includes('https://www.googleapis.com/auth/drive.file')) throw new Error('M2-C must document drive.file scope');
 if (/Drive\.Files\.(remove|delete)\s*\(/.test(driveMutation)) throw new Error('M2-C permanent deletion forbidden');
 if (!driveMutation.includes("Drive.Files.update({trashed: true}")) throw new Error('M2-C reversible trash cleanup missing');
+if (!driveMutation.includes('createdFileId') || !driveMutation.includes('copiedFileId')) throw new Error('M2-C must preserve created artifact IDs for cleanup even when readback fails');
 const versionMatch = mechanicalHealth.match(/version:\s*'([^']+)'/);
 if (!versionMatch || mechanicalVersion.version !== versionMatch[1]) throw new Error('M2-A runtime/version.json mismatch');
 if (/ScriptApp\.newTrigger|\.create\(\)/.test(lockProbe)) throw new Error('trigger creation forbidden in lock probe');
