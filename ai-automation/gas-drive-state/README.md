@@ -136,3 +136,30 @@ Still excluded:
 - trigger creation
 - automatic Apps Script source self-update
 - Production deployment or scheduling
+
+
+## M2-B candidate — trigger preflight + TEST-only contract
+
+This branch adds a bounded scheduler candidate:
+- authorization preflight for `script.scriptapp`
+- exact inspection of the dedicated TEST handler only
+- TEST-only hourly trigger create/verify/delete acceptance
+- fail closed if a matching TEST trigger already exists
+- exact cleanup by handler + trigger unique ID
+- Production trigger installation remains hard-disabled behind a Human Gate
+
+Authorization impact:
+- adds Apps Script scope `https://www.googleapis.com/auth/script.scriptapp`
+- this may require one additional Google authorization interaction in Dev
+- no Drive write scope is added
+
+Canonical version behavior:
+- GitHub `main` is the canonical version source
+- before merge, a newer Dev candidate should report `UPDATE_AVAILABLE`
+- after merge + main redeploy, matching builds should report `MATCH`
+
+Still excluded:
+- Production trigger creation
+- recurring Production scheduling
+- Drive create/copy/update/delete
+- automatic GAS source self-update

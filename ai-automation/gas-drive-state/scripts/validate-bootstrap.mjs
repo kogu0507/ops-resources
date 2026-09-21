@@ -12,6 +12,7 @@ const required = [
   `${root}/src/CollectorAcceptance.gs`,
   `${root}/src/LockProbe.gs`,
   `${root}/src/MechanicalHealth.gs`,
+  `${root}/src/TriggerPreflight.gs`,
   `${root}/version.json`,
   `${root}/scripts/validate-deploy-target.mjs`,
   '.github/workflows/gas-dev-deploy.yml',
@@ -22,7 +23,7 @@ for (const file of required) if (!fs.existsSync(file)) throw new Error(`missing 
 JSON.parse(fs.readFileSync(`${root}/package.json`, 'utf8'));
 const manifest = JSON.parse(fs.readFileSync(`${root}/src/appsscript.json`, 'utf8'));
 const scopes = new Set(manifest.oauthScopes || []);
-for (const requiredScope of ['https://www.googleapis.com/auth/drive.readonly','https://www.googleapis.com/auth/spreadsheets','https://www.googleapis.com/auth/script.external_request']) {
+for (const requiredScope of ['https://www.googleapis.com/auth/drive.readonly','https://www.googleapis.com/auth/spreadsheets','https://www.googleapis.com/auth/script.external_request','https://www.googleapis.com/auth/script.scriptapp']) {
   if (!scopes.has(requiredScope)) throw new Error(`missing required OAuth scope: ${requiredScope}`);
 }
 const advanced = manifest?.dependencies?.enabledAdvancedServices || [];
@@ -35,6 +36,7 @@ const collector = fs.readFileSync(`${root}/src/Collector.gs`, 'utf8');
 const collectorAcceptance = fs.readFileSync(`${root}/src/CollectorAcceptance.gs`, 'utf8');
 const lockProbe = fs.readFileSync(`${root}/src/LockProbe.gs`, 'utf8');
 const mechanicalHealth = fs.readFileSync(`${root}/src/MechanicalHealth.gs`, 'utf8');
+const triggerPreflight = fs.readFileSync(`${root}/src/TriggerPreflight.gs`, 'utf8');
 const mechanicalVersion = JSON.parse(fs.readFileSync(`${root}/version.json`, 'utf8'));
 
 for (const [name, source] of [
@@ -43,7 +45,8 @@ for (const [name, source] of [
   ['Collector.gs', collector],
   ['CollectorAcceptance.gs', collectorAcceptance],
   ['LockProbe.gs', lockProbe],
-  ['MechanicalHealth.gs', mechanicalHealth]
+  ['MechanicalHealth.gs', mechanicalHealth],
+  ['TriggerPreflight.gs', triggerPreflight]
 ]) {
   new vm.Script(source, {filename:name});
 }
@@ -59,9 +62,15 @@ if (!mechanicalHealth.includes('checkMechanicalCanonicalVersion')) throw new Err
 if (!mechanicalHealth.includes('readExactDriveMetadata')) throw new Error('M2-A exact Drive read entrypoint missing');
 if (!mechanicalHealth.includes('runMechanicalHealthCheck')) throw new Error('M2-A health entrypoint missing');
 if (!mechanicalHealth.includes('runMechanicalM2AAcceptance')) throw new Error('M2-A consolidated acceptance entrypoint missing');
-if (!mechanicalHealth.includes('ai-auto-gas-mechanical-m2a/ai-automation/gas-drive-state/version.json')) throw new Error('M2-A Dev version URL must be branch-pinned before merge');
+if (!mechanicalHealth.includes('raw.githubusercontent.com/kogu0507/ops-resources/main/ai-automation/gas-drive-state/version.json')) throw new Error('Mechanical canonical version URL must point to main');
 if (!mechanicalHealth.includes("status: 'MATCH'") && !mechanicalHealth.includes("'MATCH' : 'UPDATE_AVAILABLE'")) throw new Error('M2-A version status contract missing');
-if (/ScriptApp\.newTrigger|Drive\.Files\.(create|copy|update|delete|remove)/.test(mechanicalHealth)) throw new Error('M2-A source must remain read-only and trigger-free');
+if (/ScriptApp\.newTrigger|Drive\.Files\.(create|copy|update|delete|remove)/.test(mechanicalHealth)) throw new Error('MechanicalHealth source must remain Drive-read-only and trigger-free');
+if (!triggerPreflight.includes('getMechanicalTriggerAuthorizationPreflight')) throw new Error('M2-B authorization preflight missing');
+if (!triggerPreflight.includes('runMechanicalM2BTriggerAcceptance')) throw new Error('M2-B TEST trigger acceptance missing');
+if (!triggerPreflight.includes("everyHours(1)")) throw new Error('M2-B TEST trigger cadence must remain hourly');
+if (!triggerPreflight.includes('ScriptApp.deleteTrigger')) throw new Error('M2-B TEST trigger cleanup missing');
+if (!triggerPreflight.includes('HUMAN GATE REQUIRED')) throw new Error('M2-B Production trigger guard missing');
+if (/Drive\.Files\.(create|copy|update|delete|remove)/.test(triggerPreflight)) throw new Error('M2-B trigger source must not mutate Drive');
 const versionMatch = mechanicalHealth.match(/version:\s*'([^']+)'/);
 if (!versionMatch || mechanicalVersion.version !== versionMatch[1]) throw new Error('M2-A runtime/version.json mismatch');
 if (/ScriptApp\.newTrigger|\.create\(\)/.test(lockProbe)) throw new Error('trigger creation forbidden in lock probe');
