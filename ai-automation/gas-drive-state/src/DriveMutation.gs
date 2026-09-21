@@ -136,6 +136,7 @@ function getMechanicalM2CWriteAuthorizationPreflight() {
 }
 
 function runMechanicalM2CAcceptance() {
+  requireDevRuntimeForTestMutation_();
   ScriptApp.requireScopes(
     ScriptApp.AuthMode.FULL,
     [M2C_DRIVE.writeScope]
