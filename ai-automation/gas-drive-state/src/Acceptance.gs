@@ -14,6 +14,7 @@ const CFG = Object.freeze({
 });
 
 function runIntegratedAcceptanceTest() {
+  requireDevRuntimeForTestMutation_();
   const results = [
     testPaginationIncompleteFailClosed_(),
     testPaginationComplete_(),
