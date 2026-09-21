@@ -186,3 +186,11 @@ Still excluded:
 - arbitrary folder traversal/search
 - permission/sharing changes
 - automatic GAS source self-update
+
+
+### M2-C bounded write target
+Dev acceptance is pinned to dedicated non-production folder:
+- TEST｜GAS Mechanical M2-C Drive Write
+- folder ID: `1F7DC2PbwGH02sm7Fo4YbqF8-2juK1wPc`
+
+The acceptance creates/copies only into this folder, verifies exact IDs, then moves only the two artifacts created by that run to Trash. Trash cleanup is reversible; permanent delete remains forbidden.
