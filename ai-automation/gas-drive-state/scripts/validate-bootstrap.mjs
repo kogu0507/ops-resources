@@ -113,8 +113,8 @@ if (!devWorkflow.includes('environment: development')) throw new Error('developm
 if (!devWorkflow.includes('CLASPRC_JSON_DEV')) throw new Error('Dev-specific credential secret missing');
 if (!devWorkflow.includes('EXPECTED_DEV_SCRIPT_ID')) throw new Error('independent Dev target variable missing');
 if (!devWorkflow.includes('validate-deploy-target.mjs')) throw new Error('Dev exact-target preflight missing');
-if (!devWorkflow.includes('prepare-drift-project.mjs')) throw new Error('Dev readback project preparation missing');
-if (!devWorkflow.includes('clasp pull --project .clasp.drift.json')) throw new Error('Dev GAS readback pull missing');
+if (!devWorkflow.includes('prepare-drift-project.mjs .clasp.dev.json .gas-drift/pulled')) throw new Error('Dev readback workspace preparation missing');
+if (!devWorkflow.includes('(cd .gas-drift/pulled && ../../node_modules/.bin/clasp pull)')) throw new Error('Dev GAS readback pull missing');
 if (!devWorkflow.includes('compare-gas-source.mjs "$PWD/src" "$PWD/.gas-drift/pulled"')) throw new Error('Dev source drift comparison missing');
 
 const prodWorkflow = fs.readFileSync('.github/workflows/gas-prod-deploy.yml.disabled','utf8');
