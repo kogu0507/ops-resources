@@ -209,6 +209,22 @@ function installProductionCollectorHourlyTrigger() {
   return result;
 }
 
+function removeProductionCollectorHourlyTrigger() {
+  requireProductionRuntimeForTriggerMutation_();
+
+  const all = ScriptApp.getProjectTriggers();
+  const matches = all.filter(
+    t => t.getHandlerFunction() === PROD_COLLECTOR_TRIGGER.handler
+  );
+
+  if (all.length !== 1 || matches.length !== 1) {
+    throw new Error('PRODUCTION_TRIGGER_IDENTITY_MISMATCH');
+  }
+
+  const triggerUniqueId = matches[0].getUniqueId();
+  return removeProductionCollectorTriggerById(triggerUniqueId);
+}
+
 function removeProductionCollectorTriggerById(triggerUniqueId) {
   requireProductionRuntimeForTriggerMutation_();
 
