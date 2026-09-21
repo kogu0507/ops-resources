@@ -163,3 +163,26 @@ Still excluded:
 - recurring Production scheduling
 - Drive create/copy/update/delete
 - automatic GAS source self-update
+
+
+## M2-C candidate — bounded Drive create/copy
+
+This branch tests the narrow write surface needed for mechanical Drive create/copy:
+- adds `https://www.googleapis.com/auth/drive.file`
+- keeps existing `drive.readonly`
+- does not add full `https://www.googleapis.com/auth/drive`
+- create/copy require exact inputs and immediate readback
+- TEST acceptance creates one temporary Google Doc and copies the exact dedicated TEST spreadsheet
+- cleanup uses reversible `trashed=true` only; permanent deletion is forbidden
+
+Important scope question under test:
+- `drive.file` is officially accepted by Drive API create/copy methods
+- the Dev acceptance will verify whether the existing `drive.readonly + drive.file` combination is sufficient to copy the exact pre-existing TEST spreadsheet
+- if that copy is denied, do not widen automatically to full Drive scope; reopen the scope/design decision
+
+Still excluded:
+- Production Drive mutation
+- permanent deletion
+- arbitrary folder traversal/search
+- permission/sharing changes
+- automatic GAS source self-update
