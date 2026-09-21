@@ -58,7 +58,12 @@ for (const [name, source] of [
 
 if (!smoke.includes('HUMAN GATE REQUIRED') || !acceptance.includes('HUMAN GATE REQUIRED')) throw new Error('production trigger guard missing');
 if (!acceptance.includes('runIntegratedAcceptanceTest')) throw new Error('integrated acceptance entrypoint missing');
-if (!collector.includes('runBoundedTestCollectorV03')) throw new Error('v0.3 collector entrypoint missing');
+if (!collector.includes('runBoundedTestCollectorV03')) throw new Error('TEST collector entrypoint missing');
+if (!collector.includes('runBoundedProductionCollectorV03')) throw new Error('Production collector entrypoint missing');
+if (!collector.includes('RUNTIME_TARGET_MISMATCH')) throw new Error('exact runtime target mismatch guard missing');
+if (!collector.includes('1Txo4FJmWuJtq76e2v3nLrcw2fv1MlMTHJZnFj_lSvhE_7AZVr4UjC2zs')) throw new Error('approved Dev script ID binding missing');
+if (!collector.includes('1r3y9O0_Du-QAoxKiJRP5nCSnLzrMo5IFTV3m1ex2KsvQCFNR5d0qoLBL')) throw new Error('approved Prod script ID binding missing');
+if (!collector.includes('19t_taz3ss_HXRCOncPv1AXhQjjmCOwf0EPh1g9Q3wVY')) throw new Error('approved Prod spreadsheet ID binding missing');
 if (!collectorAcceptance.includes('runCollectorV03Acceptance')) throw new Error('v0.3 acceptance entrypoint missing');
 if (!lockProbe.includes('holdCollectorLockForOverlapProbe')) throw new Error('lock holder probe entrypoint missing');
 if (!lockProbe.includes('runCollectorLockContenderProbe')) throw new Error('lock contender probe entrypoint missing');
