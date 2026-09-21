@@ -9,7 +9,7 @@ const M2B_TRIGGER = Object.freeze({
 });
 
 const PROD_COLLECTOR_TRIGGER = Object.freeze({
-  handler: 'runBoundedProductionCollectorV03',
+  handler: 'runScheduledProductionCollectorV03',
   scope: 'https://www.googleapis.com/auth/script.scriptapp',
   cadenceHours: 1
 });
