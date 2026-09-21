@@ -4,7 +4,7 @@ Google Drive is the project authority. This repository is the technical source/d
 
 ## Current status — 2026-09-20
 
-**Operational baseline: Dev verified; Production targets materialized but runtime remains inert.**
+**Operational baseline: Dev verified; Production source materialized and first manual Production collection verified; recurring trigger not yet enabled.**
 
 Verified Dev path:
 - GitHub main -> manual GitHub Actions -> clasp -> exact Dev Apps Script target
@@ -17,10 +17,9 @@ Verified Dev path:
 - Collector/Judge field ownership separation
 - empirical two-invocation ScriptLock overlap: contender returns SKIPPED / LOCK_HELD and performs no run write
 
-No Production collector is running.
-No recurring Drive-state trigger exists.
-Production spreadsheet + standalone Apps Script target now exist under the same intended owner, but no Production source has been deployed and no trigger exists.
-Do not enable the disabled Production workflow; current preferred path remains manual exact-target Production materialization with readback verification.
+Production source is materialized on the exact standalone Apps Script target and the first manual Production collection completed SUCCESS with 4/4 configured sources, 0 errors, and fresh readback verification.
+No recurring Drive-state trigger exists yet.
+Do not enable the disabled Production GitHub workflow. Production recurring scheduling is handled by an exact-project-guarded Apps Script hourly trigger lifecycle under a separate Human Gate.
 
 ## Known targets
 
@@ -35,8 +34,9 @@ Current Production targets — materialized 2026-09-22, still inert:
 - spreadsheet ID: `19t_taz3ss_HXRCOncPv1AXhQjjmCOwf0EPh1g9Q3wVY`
 - Apps Script ID: `1r3y9O0_Du-QAoxKiJRP5nCSnLzrMo5IFTV3m1ex2KsvQCFNR5d0qoLBL`
 - both owned by the same intended existing Google account
-- no Production source deployed yet
-- no Production run data or recurring trigger yet
+- Production source is materialized and readback-matched to reviewed GitHub main
+- first manual Production run is verified SUCCESS
+- no recurring trigger yet
 
 Historical frozen Production observation spreadsheet:
 - title: `FROZEN｜AI Automation Drive-state v0.1｜2026-09-20`
@@ -74,10 +74,10 @@ The earlier Production Pilot P0-A path was frozen after a late prerequisite disc
 Current Production boundary:
 - exact Production targets are now materialized and pinned
 - do not create Production clasp/GitHub credentials by default
-- do not execute the Production collector yet
-- do not create a recurring trigger yet
+- first manual Production collector execution is complete and readback-verified
+- recurring Production trigger remains separately gated
 - do not broaden source scope
-- Production source update requires exact-target preflight + immediate readback verification
+- any Production source update still requires exact-target preflight + immediate readback verification
 
 The frozen spreadsheet is preserved only as an inert artifact so the interrupted work is explicit rather than ambiguous.
 
@@ -226,3 +226,25 @@ Why this shape:
 - drift verification becomes part of the existing deploy contract instead of another human step.
 
 Production remains unchanged.
+
+
+## M3 Production recurring trigger candidate
+
+Current candidate after first successful manual Production collection:
+- file: `src/TriggerPreflight.gs`
+- handler: `runScheduledProductionCollectorV03`
+- cadence: hourly
+- scheduled runs write `trigger_type=TIME_TRIGGER_HOURLY`; the manual entrypoint remains `runBoundedProductionCollectorV03` with `MANUAL_PRODUCTION`
+- installer: `installProductionCollectorHourlyTrigger`
+- preflight: `getProductionCollectorTriggerPreflight`
+- human-runnable rollback/removal: `removeProductionCollectorHourlyTrigger()`
+- internal exact-ID removal helper: `removeProductionCollectorTriggerById(triggerUniqueId)`
+- exact runtime guard: Production trigger mutation is allowed only when `ScriptApp.getScriptId()` matches the pinned Production Apps Script ID
+- install fails closed if any matching Production trigger already exists
+- install also fails closed if any unexpected project trigger already exists
+- post-create verification requires exactly one project trigger with the returned unique ID
+- rollback deletes only the exact Production handler + exact unique ID and verifies removal
+- no new OAuth scope is introduced; `script.scriptapp` is already in the manifest and was reviewed during the first Production authorization
+- no Production GitHub Environment or new clasp credential is added
+
+This candidate does not itself create a trigger merely by being deployed. Trigger installation remains a Human-Gate action.
