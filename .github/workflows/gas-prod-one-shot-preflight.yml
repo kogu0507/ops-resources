@@ -1,4 +1,4 @@
-name: GAS Prod One-shot Preflight
+name: GAS Prod One-shot Materialization
 
 on:
   push:
@@ -11,11 +11,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: gas-prod-one-shot-preflight
+  group: gas-prod-one-shot-materialization
   cancel-in-progress: false
 
 jobs:
-  preflight-prod:
+  materialize-prod:
     environment: development
     runs-on: ubuntu-latest
     defaults:
@@ -71,15 +71,23 @@ jobs:
       - name: Read-only access check via clasp status
         run: npx clasp status --project .clasp.prod.preflight.json
 
+      - name: Push reviewed source to exact Production target
+        run: npx clasp push --force --project .clasp.prod.preflight.json
+
       - name: Prepare isolated Production readback workspace
         run: node scripts/prepare-drift-project.mjs .clasp.prod.preflight.json .gas-prod-preflight/pulled
 
-      - name: Read-only pull exact Production target
+      - name: Pull exact Production target after push
         run: |
           (cd .gas-prod-preflight/pulled && ../../node_modules/.bin/clasp pull)
           rm -f .gas-prod-preflight/pulled/.clasp.json
           find .gas-prod-preflight/pulled -maxdepth 1 -type f -print | sort
-          echo "PROD_READ_ONLY_PREFLIGHT: PASS"
+
+      - name: Verify reviewed GitHub source matches Production GAS readback
+        run: |
+          node scripts/compare-gas-source.mjs "$PWD/src" "$PWD/.gas-prod-preflight/pulled"
+          echo "PRODUCTION_SOURCE_MATERIALIZATION: SUCCESS"
+          echo "READBACK_COMPARE: MATCH"
 
       - name: Remove temporary credential and readback files
         if: always()
