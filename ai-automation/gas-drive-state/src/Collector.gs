@@ -6,8 +6,11 @@
  * in one Google Sheets spreadsheets.batchUpdate request.
  */
 const COLLECTOR_V03 = Object.freeze({
-  VERSION: 'collector-v0.3.1',
+  VERSION: 'collector-v0.4.0',
+  DEV_SCRIPT_ID: '1Txo4FJmWuJtq76e2v3nLrcw2fv1MlMTHJZnFj_lSvhE_7AZVr4UjC2zs',
+  PROD_SCRIPT_ID: '1r3y9O0_Du-QAoxKiJRP5nCSnLzrMo5IFTV3m1ex2KsvQCFNR5d0qoLBL',
   TEST_SPREADSHEET_ID: '1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0',
+  PROD_SPREADSHEET_ID: '19t_taz3ss_HXRCOncPv1AXhQjjmCOwf0EPh1g9Q3wVY',
   SOURCE_SHEET: 'SOURCES',
   STATE_SHEET: 'DRIVE_STATE',
   RUN_SHEET: 'COLLECTION_RUNS',
@@ -15,21 +18,57 @@ const COLLECTOR_V03 = Object.freeze({
 });
 
 function runBoundedTestCollectorV03() {
+  return v03RunForTarget_('DEV_TEST');
+}
+
+function runBoundedProductionCollectorV03() {
+  return v03RunForTarget_('PRODUCTION');
+}
+
+function v03RunForTarget_(targetKey) {
+  const target = v03ResolveRuntimeTarget_(targetKey);
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(1)) {
     console.log('SKIPPED: collector lock already held; no writes performed.');
     return {run_status:'SKIPPED', reason:'LOCK_HELD'};
   }
   try {
-    return v03Run_();
+    return v03Run_(target);
   } finally {
     lock.releaseLock();
   }
 }
 
-function v03Run_() {
+function v03ResolveRuntimeTarget_(targetKey) {
+  const currentScriptId = ScriptApp.getScriptId();
+  const targets = {
+    DEV_TEST: {
+      scriptId: COLLECTOR_V03.DEV_SCRIPT_ID,
+      spreadsheetId: COLLECTOR_V03.TEST_SPREADSHEET_ID,
+      triggerType: 'MANUAL_TEST',
+      scopeRef: 'TEST:SOURCES enabled rows'
+    },
+    PRODUCTION: {
+      scriptId: COLLECTOR_V03.PROD_SCRIPT_ID,
+      spreadsheetId: COLLECTOR_V03.PROD_SPREADSHEET_ID,
+      triggerType: 'MANUAL_PRODUCTION',
+      scopeRef: 'PRODUCTION:SOURCES enabled rows'
+    }
+  };
+  const target = targets[String(targetKey || '')];
+  if (!target) throw v03Error_('RUNTIME_TARGET_INVALID', 'unknown runtime target=' + String(targetKey));
+  if (currentScriptId !== target.scriptId) {
+    throw v03Error_(
+      'RUNTIME_TARGET_MISMATCH',
+      'current script id does not match approved ' + String(targetKey) + ' target'
+    );
+  }
+  return target;
+}
+
+function v03Run_(target) {
   const started = new Date();
-  const ss = SpreadsheetApp.openById(COLLECTOR_V03.TEST_SPREADSHEET_ID);
+  const ss = SpreadsheetApp.openById(target.spreadsheetId);
   const sourcesSheet = v03RequireSheet_(ss, COLLECTOR_V03.SOURCE_SHEET);
   const stateSheet = v03RequireSheet_(ss, COLLECTOR_V03.STATE_SHEET);
   const runsSheet = v03RequireSheet_(ss, COLLECTOR_V03.RUN_SHEET);
@@ -58,8 +97,8 @@ function v03Run_() {
     started_at: started.toISOString(),
     finished_at: finished.toISOString(),
     collector_version: COLLECTOR_V03.VERSION,
-    trigger_type: 'MANUAL_TEST',
-    scope_ref: 'TEST:SOURCES enabled rows',
+    trigger_type: target.triggerType,
+    scope_ref: target.scopeRef,
     attempted_count: outcomes.length,
     success_count: successCount,
     error_count: errorCount,
