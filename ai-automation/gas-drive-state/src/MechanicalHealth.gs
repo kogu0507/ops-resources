@@ -5,7 +5,7 @@
  */
 const MECHANICAL_LAYER_BUILD = Object.freeze({
   component: 'ai-automation-drive-state-mechanical',
-  version: 'm3-prod-0.4.0',
+  version: 'm3-prod-trigger-0.5.0',
   versionUrl: 'https://raw.githubusercontent.com/kogu0507/ops-resources/main/ai-automation/gas-drive-state/version.json'
 });
 
