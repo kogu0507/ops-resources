@@ -232,8 +232,9 @@ Production remains unchanged.
 
 Current candidate after first successful manual Production collection:
 - file: `src/TriggerPreflight.gs`
-- handler: `runBoundedProductionCollectorV03`
+- handler: `runScheduledProductionCollectorV03`
 - cadence: hourly
+- scheduled runs write `trigger_type=TIME_TRIGGER_HOURLY`; the manual entrypoint remains `runBoundedProductionCollectorV03` with `MANUAL_PRODUCTION`
 - installer: `installProductionCollectorHourlyTrigger`
 - preflight: `getProductionCollectorTriggerPreflight`
 - rollback/removal: `removeProductionCollectorTriggerById(triggerUniqueId)`
