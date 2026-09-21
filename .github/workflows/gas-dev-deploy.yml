@@ -52,6 +52,17 @@ jobs:
         run: npx clasp status --project .clasp.dev.json
       - name: Push source to exact Dev target
         run: npx clasp push --force --project .clasp.dev.json
-      - name: Remove temporary credential files
+      - name: Prepare isolated Dev readback workspace
+        run: node scripts/prepare-drift-project.mjs .clasp.dev.json .gas-drift/pulled
+      - name: Pull exact Dev target after push
+        run: |
+          (cd .gas-drift/pulled && ../../node_modules/.bin/clasp pull)
+          rm -f .gas-drift/pulled/.clasp.json
+      - name: Verify GitHub source matches Dev GAS readback
+        run: |
+          echo "working-directory=$PWD"
+          find .gas-drift/pulled -maxdepth 1 -type f -print | sort
+          node scripts/compare-gas-source.mjs "$PWD/src" "$PWD/.gas-drift/pulled"
+      - name: Remove temporary credential and readback files
         if: always()
-        run: rm -f "$HOME/.clasprc.json" .clasp.dev.json
+        run: rm -rf "$HOME/.clasprc.json" .clasp.dev.json .gas-drift
