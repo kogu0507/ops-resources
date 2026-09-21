@@ -82,9 +82,12 @@ function copyMechanicalDriveFile(sourceFileId, spec) {
 
 function trashMechanicalCreatedFile_(fileId) {
   if (typeof fileId !== 'string' || !fileId.trim()) return {status: 'SKIPPED'};
-  Drive.Files.update({trashed: true}, fileId.trim(), {
-    fields: 'id,trashed'
-  });
+  Drive.Files.update(
+    {trashed: true},
+    fileId.trim(),
+    null,
+    {fields: 'id,trashed'}
+  );
   const readback = Drive.Files.get(fileId.trim(), {
     fields: 'id,trashed'
   });
@@ -113,6 +116,7 @@ function runMechanicalM2CAcceptance() {
       name: M2C_DRIVE.testPrefix + 'CREATE_' + stamp
     });
     createdId = created.createdFileId || (created.file && created.file.id) || null;
+    if (createdId) console.log(JSON.stringify({event: 'M2C_CREATED_ARTIFACT', fileId: createdId}));
     if (created.status !== 'PASS' || !createdId) {
       throw new Error('CREATE_ACCEPTANCE_FAILED');
     }
@@ -121,6 +125,7 @@ function runMechanicalM2CAcceptance() {
       name: M2C_DRIVE.testPrefix + 'COPY_' + stamp
     });
     copiedId = copied.copiedFileId || (copied.file && copied.file.id) || null;
+    if (copiedId) console.log(JSON.stringify({event: 'M2C_COPIED_ARTIFACT', fileId: copiedId}));
     if (copied.status !== 'PASS' || !copiedId) {
       throw new Error('COPY_ACCEPTANCE_FAILED');
     }
