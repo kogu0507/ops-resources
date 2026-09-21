@@ -39,7 +39,10 @@ function readScript(dir, base) {
   const candidates = [path.join(dir, base + '.gs'), path.join(dir, base + '.js')];
   const found = candidates.filter(fs.existsSync);
   if (found.length !== 1) {
-    throw new Error(`expected exactly one pulled source for ${base}, found ${found.length}`);
+    const visible = fs.existsSync(dir) ? fs.readdirSync(dir).sort() : [];
+    throw new Error(
+      `expected exactly one pulled source for ${base}, found ${found.length}; cwd=${process.cwd()}; pulledDir=${dir}; files=${JSON.stringify(visible)}`
+    );
   }
   return normalizeText(fs.readFileSync(found[0], 'utf8'));
 }
