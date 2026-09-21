@@ -42,6 +42,7 @@ function mechanicalM2BTestTick() {
 }
 
 function runMechanicalM2BTriggerAcceptance() {
+  requireDevRuntimeForTestMutation_();
   ScriptApp.requireScopes(
     ScriptApp.AuthMode.FULL,
     [M2B_TRIGGER.scope]

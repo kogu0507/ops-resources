@@ -58,7 +58,13 @@ for (const [name, source] of [
 
 if (!smoke.includes('HUMAN GATE REQUIRED') || !acceptance.includes('HUMAN GATE REQUIRED')) throw new Error('production trigger guard missing');
 if (!acceptance.includes('runIntegratedAcceptanceTest')) throw new Error('integrated acceptance entrypoint missing');
-if (!collector.includes('runBoundedTestCollectorV03')) throw new Error('v0.3 collector entrypoint missing');
+if (!collector.includes('runBoundedTestCollectorV03')) throw new Error('TEST collector entrypoint missing');
+if (!collector.includes('runBoundedProductionCollectorV03')) throw new Error('Production collector entrypoint missing');
+if (!collector.includes('requireDevRuntimeForTestMutation_')) throw new Error('shared Dev-only TEST mutation guard missing');
+if (!collector.includes('RUNTIME_TARGET_MISMATCH')) throw new Error('exact runtime target mismatch guard missing');
+if (!collector.includes('1Txo4FJmWuJtq76e2v3nLrcw2fv1MlMTHJZnFj_lSvhE_7AZVr4UjC2zs')) throw new Error('approved Dev script ID binding missing');
+if (!collector.includes('1r3y9O0_Du-QAoxKiJRP5nCSnLzrMo5IFTV3m1ex2KsvQCFNR5d0qoLBL')) throw new Error('approved Prod script ID binding missing');
+if (!collector.includes('19t_taz3ss_HXRCOncPv1AXhQjjmCOwf0EPh1g9Q3wVY')) throw new Error('approved Prod spreadsheet ID binding missing');
 if (!collectorAcceptance.includes('runCollectorV03Acceptance')) throw new Error('v0.3 acceptance entrypoint missing');
 if (!lockProbe.includes('holdCollectorLockForOverlapProbe')) throw new Error('lock holder probe entrypoint missing');
 if (!lockProbe.includes('runCollectorLockContenderProbe')) throw new Error('lock contender probe entrypoint missing');
@@ -100,6 +106,21 @@ if (!collectorAcceptance.includes('finally')) throw new Error('acceptance cleanu
 if (!collectorAcceptance.includes('v03TestDeleteRowsByStateKey_')) throw new Error('acceptance sentinel cleanup helper missing');
 if (!collectorAcceptance.includes('Sheets.Spreadsheets.Values.get')) throw new Error('acceptance fresh Sheets API readback missing');
 if (!collectorAcceptance.includes('post-commit assertions used fresh Advanced Sheets API readback')) throw new Error('fresh-read acceptance evidence log missing');
+
+for (const [name, source, entrypoint] of [
+  ['Acceptance.gs', acceptance, 'runIntegratedAcceptanceTest'],
+  ['CollectorAcceptance.gs', collectorAcceptance, 'runCollectorV03Acceptance'],
+  ['TriggerPreflight.gs', triggerPreflight, 'runMechanicalM2BTriggerAcceptance'],
+  ['DriveMutation.gs', driveMutation, 'runMechanicalM2CAcceptance']
+]) {
+  const marker = 'function ' + entrypoint + '() {';
+  const start = source.indexOf(marker);
+  if (start < 0) throw new Error(name + ' TEST mutation entrypoint missing: ' + entrypoint);
+  const prefix = source.slice(start, start + 220);
+  if (!prefix.includes('requireDevRuntimeForTestMutation_();')) {
+    throw new Error(name + ' TEST mutation entrypoint must guard Dev runtime before mutation: ' + entrypoint);
+  }
+}
 
 const requiredTestId = '1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0';
 if (!collector.includes(requiredTestId)) throw new Error('collector must remain pinned to dedicated TEST spreadsheet');
