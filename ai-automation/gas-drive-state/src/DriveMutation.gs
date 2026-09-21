@@ -30,14 +30,23 @@ function createMechanicalDriveFile(spec) {
     fields: 'id,name,mimeType,parents,trashed'
   });
 
-  const readback = Drive.Files.get(created.id, {
-    fields: 'id,name,mimeType,parents,trashed'
-  });
-
-  return {
-    status: readback && readback.id === created.id && !readback.trashed ? 'PASS' : 'CREATE_VERIFY_FAILED',
-    file: readback
-  };
+  let readback = null;
+  try {
+    readback = Drive.Files.get(created.id, {
+      fields: 'id,name,mimeType,parents,trashed'
+    });
+    return {
+      status: readback && readback.id === created.id && !readback.trashed ? 'PASS' : 'CREATE_VERIFY_FAILED',
+      createdFileId: created.id,
+      file: readback
+    };
+  } catch (err) {
+    return {
+      status: 'CREATE_VERIFY_FAILED',
+      createdFileId: created.id,
+      reason: String(err && err.message ? err.message : err)
+    };
+  }
 }
 
 function copyMechanicalDriveFile(sourceFileId, spec) {
@@ -52,14 +61,23 @@ function copyMechanicalDriveFile(sourceFileId, spec) {
     supportsAllDrives: true
   });
 
-  const readback = Drive.Files.get(copied.id, {
-    fields: 'id,name,mimeType,parents,trashed'
-  });
-
-  return {
-    status: readback && readback.id === copied.id && !readback.trashed ? 'PASS' : 'COPY_VERIFY_FAILED',
-    file: readback
-  };
+  let readback = null;
+  try {
+    readback = Drive.Files.get(copied.id, {
+      fields: 'id,name,mimeType,parents,trashed'
+    });
+    return {
+      status: readback && readback.id === copied.id && !readback.trashed ? 'PASS' : 'COPY_VERIFY_FAILED',
+      copiedFileId: copied.id,
+      file: readback
+    };
+  } catch (err) {
+    return {
+      status: 'COPY_VERIFY_FAILED',
+      copiedFileId: copied.id,
+      reason: String(err && err.message ? err.message : err)
+    };
+  }
 }
 
 function trashMechanicalCreatedFile_(fileId) {
@@ -94,18 +112,18 @@ function runMechanicalM2CAcceptance() {
     created = createMechanicalDriveFile({
       name: M2C_DRIVE.testPrefix + 'CREATE_' + stamp
     });
-    if (created.status !== 'PASS' || !created.file || !created.file.id) {
+    createdId = created.createdFileId || (created.file && created.file.id) || null;
+    if (created.status !== 'PASS' || !createdId) {
       throw new Error('CREATE_ACCEPTANCE_FAILED');
     }
-    createdId = created.file.id;
 
     copied = copyMechanicalDriveFile(M2C_DRIVE.sourceFileId, {
       name: M2C_DRIVE.testPrefix + 'COPY_' + stamp
     });
-    if (copied.status !== 'PASS' || !copied.file || !copied.file.id) {
+    copiedId = copied.copiedFileId || (copied.file && copied.file.id) || null;
+    if (copied.status !== 'PASS' || !copiedId) {
       throw new Error('COPY_ACCEPTANCE_FAILED');
     }
-    copiedId = copied.file.id;
   } finally {
     if (copiedId) copiedCleanup = trashMechanicalCreatedFile_(copiedId);
     if (createdId) createdCleanup = trashMechanicalCreatedFile_(createdId);
