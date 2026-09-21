@@ -77,10 +77,12 @@ if (/Drive\.Files\.(create|copy|update|delete|remove)/.test(triggerPreflight)) t
 if (!driveMutation.includes('createMechanicalDriveFile')) throw new Error('M2-C create primitive missing');
 if (!driveMutation.includes('copyMechanicalDriveFile')) throw new Error('M2-C copy primitive missing');
 if (!driveMutation.includes('runMechanicalM2CAcceptance')) throw new Error('M2-C acceptance missing');
+if (!driveMutation.includes('getMechanicalM2CWriteAuthorizationPreflight')) throw new Error('M2-C authorization/target preflight missing');
+if (!driveMutation.includes('1F7DC2PbwGH02sm7Fo4YbqF8-2juK1wPc')) throw new Error('M2-C must remain pinned to dedicated TEST write folder');
 if (!driveMutation.includes("cleanupMode: 'TRASH_ONLY_REVERSIBLE'")) throw new Error('M2-C cleanup must remain reversible trash-only');
 if (!driveMutation.includes('https://www.googleapis.com/auth/drive.file')) throw new Error('M2-C must document drive.file scope');
 if (/Drive\.Files\.(remove|delete)\s*\(/.test(driveMutation)) throw new Error('M2-C permanent deletion forbidden');
-if (!driveMutation.includes("Drive.Files.update({trashed: true}")) throw new Error('M2-C reversible trash cleanup missing');
+if (!/Drive\.Files\.update\([\s\S]*?\{trashed:\s*true\}/.test(driveMutation)) throw new Error('M2-C reversible trash cleanup missing');
 if (!driveMutation.includes('createdFileId') || !driveMutation.includes('copiedFileId')) throw new Error('M2-C must preserve created artifact IDs for cleanup even when readback fails');
 if (!driveMutation.includes("event: 'M2C_CREATED_ARTIFACT'") || !driveMutation.includes("event: 'M2C_COPIED_ARTIFACT'")) throw new Error('M2-C must log exact TEST artifact IDs before cleanup');
 if (!/Drive\.Files\.update\([\s\S]*?null,[\s\S]*?fields:\s*'id,trashed'/.test(driveMutation)) throw new Error('M2-C Drive v3 trash update must pass null mediaData before optionalArgs');
