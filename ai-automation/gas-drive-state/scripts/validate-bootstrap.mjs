@@ -84,7 +84,8 @@ if (!triggerPreflight.includes('ScriptApp.deleteTrigger')) throw new Error('M2-B
 if (!triggerPreflight.includes('requireProductionRuntimeForTriggerMutation_')) throw new Error('Production trigger exact-project guard missing');
 if (!triggerPreflight.includes('getProductionCollectorTriggerPreflight')) throw new Error('Production trigger preflight missing');
 if (!triggerPreflight.includes('installProductionCollectorHourlyTrigger')) throw new Error('Production trigger installer missing');
-if (!triggerPreflight.includes('removeProductionCollectorTriggerById')) throw new Error('Production trigger removal missing');
+if (!triggerPreflight.includes('removeProductionCollectorHourlyTrigger')) throw new Error('Production no-arg trigger removal entrypoint missing');
+if (!triggerPreflight.includes('removeProductionCollectorTriggerById')) throw new Error('Production exact-ID trigger removal helper missing');
 if (!triggerPreflight.includes("handler: 'runScheduledProductionCollectorV03'")) throw new Error('Production trigger handler must be exact collector entrypoint');
 if (!triggerPreflight.includes('BLOCKED_EXISTING_PRODUCTION_TRIGGER')) throw new Error('Production duplicate-trigger fail-close missing');
 if (!triggerPreflight.includes('BLOCKED_UNEXPECTED_PROJECT_TRIGGER')) throw new Error('Production unexpected-trigger fail-close missing');
