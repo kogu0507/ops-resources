@@ -237,7 +237,8 @@ Current candidate after first successful manual Production collection:
 - scheduled runs write `trigger_type=TIME_TRIGGER_HOURLY`; the manual entrypoint remains `runBoundedProductionCollectorV03` with `MANUAL_PRODUCTION`
 - installer: `installProductionCollectorHourlyTrigger`
 - preflight: `getProductionCollectorTriggerPreflight`
-- rollback/removal: `removeProductionCollectorTriggerById(triggerUniqueId)`
+- human-runnable rollback/removal: `removeProductionCollectorHourlyTrigger()`
+- internal exact-ID removal helper: `removeProductionCollectorTriggerById(triggerUniqueId)`
 - exact runtime guard: Production trigger mutation is allowed only when `ScriptApp.getScriptId()` matches the pinned Production Apps Script ID
 - install fails closed if any matching Production trigger already exists
 - install also fails closed if any unexpected project trigger already exists
