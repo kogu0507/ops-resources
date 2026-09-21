@@ -194,3 +194,27 @@ Dev acceptance is pinned to dedicated non-production folder:
 - folder ID: `1F7DC2PbwGH02sm7Fo4YbqF8-2juK1wPc`
 
 The acceptance creates/copies only into this folder, verifies exact IDs, then moves only the two artifacts created by that run to Trash. Trash cleanup is reversible; permanent delete remains forbidden.
+
+
+## M2-D candidate — post-deploy Dev source drift verification
+
+Goal:
+- verify that GitHub source and the exact Dev Apps Script project are materially identical after every Dev deploy.
+
+Implementation:
+- reuse the existing development clasp credential and exact Dev script ID.
+- after `clasp push`, create an isolated temporary clasp project pointing at the same exact script ID.
+- `clasp pull` the Dev project into a temporary directory.
+- compare all canonical GAS source files plus `appsscript.json`.
+- normalize only line endings/final newline for source files and object-key order for manifest JSON.
+- fail the deploy workflow if any source file differs, is missing, or an unexpected pulled file exists.
+- remove temporary credential/project/readback files in the workflow cleanup step.
+
+Why this shape:
+- no new Google account or credential.
+- no additional Apps Script UI operation.
+- no Production access.
+- no scheduler added.
+- drift verification becomes part of the existing deploy contract instead of another human step.
+
+Production remains unchanged.
