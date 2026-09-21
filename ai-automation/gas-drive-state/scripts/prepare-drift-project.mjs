@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import path from 'node:path';
 
-const [inputFile, outputFile, rootDir] = process.argv.slice(2);
-if (!inputFile || !outputFile || !rootDir) {
-  throw new Error('usage: prepare-drift-project.mjs <input-project> <output-project> <rootDir>');
+const [inputFile, workDir] = process.argv.slice(2);
+if (!inputFile || !workDir) {
+  throw new Error('usage: prepare-drift-project.mjs <input-project> <workDir>');
 }
 
 const project = JSON.parse(fs.readFileSync(inputFile, 'utf8'));
@@ -15,9 +16,15 @@ if (typeof project.scriptId !== 'string' || !project.scriptId.trim()) {
   throw new Error('scriptId missing');
 }
 
-fs.mkdirSync(rootDir, {recursive: true});
-fs.writeFileSync(outputFile, JSON.stringify({
-  scriptId: project.scriptId,
-  rootDir
-}, null, 2) + '\n');
-console.log(JSON.stringify({scriptIdVerified: true, driftRootDir: rootDir}));
+const absoluteWorkDir = path.resolve(workDir);
+fs.rmSync(absoluteWorkDir, {recursive: true, force: true});
+fs.mkdirSync(absoluteWorkDir, {recursive: true});
+fs.writeFileSync(
+  path.join(absoluteWorkDir, '.clasp.json'),
+  JSON.stringify({scriptId: project.scriptId}, null, 2) + '\n'
+);
+
+console.log(JSON.stringify({
+  scriptIdVerified: true,
+  driftWorkDir: absoluteWorkDir
+}));
