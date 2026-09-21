@@ -6,7 +6,7 @@
  * in one Google Sheets spreadsheets.batchUpdate request.
  */
 const COLLECTOR_V03 = Object.freeze({
-  VERSION: 'collector-v0.4.0',
+  VERSION: 'collector-v0.5.0',
   DEV_SCRIPT_ID: '1Txo4FJmWuJtq76e2v3nLrcw2fv1MlMTHJZnFj_lSvhE_7AZVr4UjC2zs',
   PROD_SCRIPT_ID: '1r3y9O0_Du-QAoxKiJRP5nCSnLzrMo5IFTV3m1ex2KsvQCFNR5d0qoLBL',
   TEST_SPREADSHEET_ID: '1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0',
@@ -36,6 +36,10 @@ function runBoundedProductionCollectorV03() {
   return v03RunForTarget_('PRODUCTION');
 }
 
+function runScheduledProductionCollectorV03() {
+  return v03RunForTarget_('PRODUCTION_SCHEDULED');
+}
+
 function v03RunForTarget_(targetKey) {
   const target = v03ResolveRuntimeTarget_(targetKey);
   const lock = LockService.getScriptLock();
@@ -63,6 +67,12 @@ function v03ResolveRuntimeTarget_(targetKey) {
       scriptId: COLLECTOR_V03.PROD_SCRIPT_ID,
       spreadsheetId: COLLECTOR_V03.PROD_SPREADSHEET_ID,
       triggerType: 'MANUAL_PRODUCTION',
+      scopeRef: 'PRODUCTION:SOURCES enabled rows'
+    },
+    PRODUCTION_SCHEDULED: {
+      scriptId: COLLECTOR_V03.PROD_SCRIPT_ID,
+      spreadsheetId: COLLECTOR_V03.PROD_SPREADSHEET_ID,
+      triggerType: 'TIME_TRIGGER_HOURLY',
       scopeRef: 'PRODUCTION:SOURCES enabled rows'
     }
   };
