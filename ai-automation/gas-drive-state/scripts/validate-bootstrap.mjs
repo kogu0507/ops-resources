@@ -115,7 +115,7 @@ if (!devWorkflow.includes('EXPECTED_DEV_SCRIPT_ID')) throw new Error('independen
 if (!devWorkflow.includes('validate-deploy-target.mjs')) throw new Error('Dev exact-target preflight missing');
 if (!devWorkflow.includes('prepare-drift-project.mjs')) throw new Error('Dev readback project preparation missing');
 if (!devWorkflow.includes('clasp pull --project .clasp.drift.json')) throw new Error('Dev GAS readback pull missing');
-if (!devWorkflow.includes('compare-gas-source.mjs src .gas-drift/pulled')) throw new Error('Dev source drift comparison missing');
+if (!devWorkflow.includes('compare-gas-source.mjs "$PWD/src" "$PWD/.gas-drift/pulled"')) throw new Error('Dev source drift comparison missing');
 
 const prodWorkflow = fs.readFileSync('.github/workflows/gas-prod-deploy.yml.disabled','utf8');
 if (!prodWorkflow.includes('environment: production')) throw new Error('production Environment boundary missing');
