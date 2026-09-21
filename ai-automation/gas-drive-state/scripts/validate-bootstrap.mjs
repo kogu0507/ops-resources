@@ -13,6 +13,7 @@ const required = [
   `${root}/src/LockProbe.gs`,
   `${root}/src/MechanicalHealth.gs`,
   `${root}/src/TriggerPreflight.gs`,
+  `${root}/src/DriveMutation.gs`,
   `${root}/version.json`,
   `${root}/scripts/validate-deploy-target.mjs`,
   '.github/workflows/gas-dev-deploy.yml',
@@ -23,7 +24,7 @@ for (const file of required) if (!fs.existsSync(file)) throw new Error(`missing 
 JSON.parse(fs.readFileSync(`${root}/package.json`, 'utf8'));
 const manifest = JSON.parse(fs.readFileSync(`${root}/src/appsscript.json`, 'utf8'));
 const scopes = new Set(manifest.oauthScopes || []);
-for (const requiredScope of ['https://www.googleapis.com/auth/drive.readonly','https://www.googleapis.com/auth/spreadsheets','https://www.googleapis.com/auth/script.external_request','https://www.googleapis.com/auth/script.scriptapp']) {
+for (const requiredScope of ['https://www.googleapis.com/auth/drive.readonly','https://www.googleapis.com/auth/drive.file','https://www.googleapis.com/auth/spreadsheets','https://www.googleapis.com/auth/script.external_request','https://www.googleapis.com/auth/script.scriptapp']) {
   if (!scopes.has(requiredScope)) throw new Error(`missing required OAuth scope: ${requiredScope}`);
 }
 const advanced = manifest?.dependencies?.enabledAdvancedServices || [];
@@ -37,6 +38,7 @@ const collectorAcceptance = fs.readFileSync(`${root}/src/CollectorAcceptance.gs`
 const lockProbe = fs.readFileSync(`${root}/src/LockProbe.gs`, 'utf8');
 const mechanicalHealth = fs.readFileSync(`${root}/src/MechanicalHealth.gs`, 'utf8');
 const triggerPreflight = fs.readFileSync(`${root}/src/TriggerPreflight.gs`, 'utf8');
+const driveMutation = fs.readFileSync(`${root}/src/DriveMutation.gs`, 'utf8');
 const mechanicalVersion = JSON.parse(fs.readFileSync(`${root}/version.json`, 'utf8'));
 
 for (const [name, source] of [
@@ -46,7 +48,8 @@ for (const [name, source] of [
   ['CollectorAcceptance.gs', collectorAcceptance],
   ['LockProbe.gs', lockProbe],
   ['MechanicalHealth.gs', mechanicalHealth],
-  ['TriggerPreflight.gs', triggerPreflight]
+  ['TriggerPreflight.gs', triggerPreflight],
+  ['DriveMutation.gs', driveMutation]
 ]) {
   new vm.Script(source, {filename:name});
 }
@@ -71,6 +74,18 @@ if (!triggerPreflight.includes("everyHours(1)")) throw new Error('M2-B TEST trig
 if (!triggerPreflight.includes('ScriptApp.deleteTrigger')) throw new Error('M2-B TEST trigger cleanup missing');
 if (!triggerPreflight.includes('HUMAN GATE REQUIRED')) throw new Error('M2-B Production trigger guard missing');
 if (/Drive\.Files\.(create|copy|update|delete|remove)/.test(triggerPreflight)) throw new Error('M2-B trigger source must not mutate Drive');
+if (!driveMutation.includes('createMechanicalDriveFile')) throw new Error('M2-C create primitive missing');
+if (!driveMutation.includes('copyMechanicalDriveFile')) throw new Error('M2-C copy primitive missing');
+if (!driveMutation.includes('runMechanicalM2CAcceptance')) throw new Error('M2-C acceptance missing');
+if (!driveMutation.includes('getMechanicalM2CWriteAuthorizationPreflight')) throw new Error('M2-C authorization/target preflight missing');
+if (!driveMutation.includes('1F7DC2PbwGH02sm7Fo4YbqF8-2juK1wPc')) throw new Error('M2-C must remain pinned to dedicated TEST write folder');
+if (!driveMutation.includes("cleanupMode: 'TRASH_ONLY_REVERSIBLE'")) throw new Error('M2-C cleanup must remain reversible trash-only');
+if (!driveMutation.includes('https://www.googleapis.com/auth/drive.file')) throw new Error('M2-C must document drive.file scope');
+if (/Drive\.Files\.(remove|delete)\s*\(/.test(driveMutation)) throw new Error('M2-C permanent deletion forbidden');
+if (!/Drive\.Files\.update\([\s\S]*?\{trashed:\s*true\}/.test(driveMutation)) throw new Error('M2-C reversible trash cleanup missing');
+if (!driveMutation.includes('createdFileId') || !driveMutation.includes('copiedFileId')) throw new Error('M2-C must preserve created artifact IDs for cleanup even when readback fails');
+if (!driveMutation.includes("event: 'M2C_CREATED_ARTIFACT'") || !driveMutation.includes("event: 'M2C_COPIED_ARTIFACT'")) throw new Error('M2-C must log exact TEST artifact IDs before cleanup');
+if (!/Drive\.Files\.update\([\s\S]*?null,[\s\S]*?fields:\s*'id,trashed'/.test(driveMutation)) throw new Error('M2-C Drive v3 trash update must pass null mediaData before optionalArgs');
 const versionMatch = mechanicalHealth.match(/version:\s*'([^']+)'/);
 if (!versionMatch || mechanicalVersion.version !== versionMatch[1]) throw new Error('M2-A runtime/version.json mismatch');
 if (/ScriptApp\.newTrigger|\.create\(\)/.test(lockProbe)) throw new Error('trigger creation forbidden in lock probe');
@@ -106,3 +121,4 @@ for (const file of [`${root}/.clasprc.json`,`${root}/.clasp.json`,`${root}/.clas
   if (fs.existsSync(file)) throw new Error(`sensitive clasp config must not be committed: ${file}`);
 }
 console.log('bootstrap validation PASS');
+
