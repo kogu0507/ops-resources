@@ -17,6 +17,17 @@ const COLLECTOR_V03 = Object.freeze({
   MAX_PAGES: 20
 });
 
+function requireDevRuntimeForTestMutation_() {
+  const currentScriptId = ScriptApp.getScriptId();
+  if (currentScriptId !== COLLECTOR_V03.DEV_SCRIPT_ID) {
+    throw v03Error_(
+      'RUNTIME_TARGET_MISMATCH',
+      'TEST-only mutation requires exact approved Dev Apps Script project'
+    );
+  }
+  return currentScriptId;
+}
+
 function runBoundedTestCollectorV03() {
   return v03RunForTarget_('DEV_TEST');
 }
