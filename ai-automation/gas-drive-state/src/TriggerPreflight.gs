@@ -181,6 +181,21 @@ function runFoundationFailureObservabilityProbe() {
   throw new Error('FOUNDATION_FAILURE_OBSERVABILITY_PROBE_DID_NOT_THROW');
 }
 
+function runFoundationDevVerificationSetup() {
+  requireDevRuntimeForTestMutation_();
+  const failureProbe = runFoundationFailureObservabilityProbe();
+  const manualRun = runFoundationManualDevCollector();
+  const triggerInstall = installFoundationDevParityTrigger();
+  const result = {
+    status: 'PASS',
+    failureProbe: failureProbe,
+    manualRun: manualRun,
+    triggerInstall: triggerInstall
+  };
+  console.log(JSON.stringify(result));
+  return result;
+}
+
 function installFoundationDevParityTrigger() {
   requireDevRuntimeForTestMutation_();
   ScriptApp.requireScopes(ScriptApp.AuthMode.FULL, [FOUNDATION_DEV_TRIGGER.scope]);
