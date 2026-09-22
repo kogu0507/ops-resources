@@ -14,6 +14,11 @@ const PROD_COLLECTOR_TRIGGER = Object.freeze({
   cadenceHours: 1
 });
 
+const FOUNDATION_DEV_TRIGGER = Object.freeze({
+  handler: 'runFoundationScheduledDevCollector',
+  scope: 'https://www.googleapis.com/auth/script.scriptapp'
+});
+
 function getMechanicalTriggerAuthorizationPreflight() {
   const info = ScriptApp.getAuthorizationInfo(
     ScriptApp.AuthMode.FULL,
@@ -109,6 +114,102 @@ function runMechanicalM2BTriggerAcceptance() {
     persistentTriggerLeftBehind: !cleanupVerified
   };
   console.log(JSON.stringify(result));
+  return result;
+}
+
+/* ---------- Dev-only execution-foundation verification ---------- */
+
+function foundationDevTarget_(triggerType) {
+  requireDevRuntimeForTestMutation_();
+  return {
+    scriptId: COLLECTOR_V03.DEV_SCRIPT_ID,
+    spreadsheetId: COLLECTOR_V03.TEST_SPREADSHEET_ID,
+    triggerType: String(triggerType),
+    scopeRef: 'TEST:SOURCES enabled rows'
+  };
+}
+
+function foundationObservedRun_(triggerType, runner) {
+  const target = foundationDevTarget_(triggerType);
+  try {
+    return runner(target);
+  } catch (e) {
+    const evidence = {
+      event: 'COLLECTOR_RUN_UNCOMMITTED_FAILURE',
+      collector_version: COLLECTOR_V03.VERSION,
+      trigger_type: target.triggerType,
+      spreadsheet_id: target.spreadsheetId,
+      error_name: String(e && e.name ? e.name : 'Error'),
+      error_message: String(e && e.message ? e.message : e),
+      error_stack: String(e && e.stack ? e.stack : '')
+    };
+    // This evidence intentionally lives outside the collector Sheet transaction.
+    // Re-throw the original object so logging can never replace/mask the primary exception.
+    console.error(JSON.stringify(evidence));
+    throw e;
+  }
+}
+
+function runFoundationManualDevCollector() {
+  return foundationObservedRun_('MANUAL_TEST', target => v03Run_(target));
+}
+
+function runFoundationScheduledDevCollector() {
+  return foundationObservedRun_('TIME_TRIGGER_TEST', target => v03Run_(target));
+}
+
+function runFoundationFailureObservabilityProbe() {
+  requireDevRuntimeForTestMutation_();
+  const marker = 'FOUNDATION_FORCED_UNCOMMITTED_FAILURE';
+  try {
+    foundationObservedRun_('FAILURE_PROBE', () => {
+      const error = new Error(marker);
+      error.name = 'FoundationProbeError';
+      throw error;
+    });
+  } catch (e) {
+    const preserved = e && e.name === 'FoundationProbeError' && e.message === marker && String(e.stack || '').includes(marker);
+    const result = {
+      status: preserved ? 'PASS' : 'FAIL',
+      originalExceptionPreserved: Boolean(preserved),
+      expectedLogEvent: 'COLLECTOR_RUN_UNCOMMITTED_FAILURE'
+    };
+    console.log(JSON.stringify(result));
+    if (!preserved) throw new Error('FOUNDATION_FAILURE_OBSERVABILITY_PROBE_FAILED');
+    return result;
+  }
+  throw new Error('FOUNDATION_FAILURE_OBSERVABILITY_PROBE_DID_NOT_THROW');
+}
+
+function installFoundationDevParityTrigger() {
+  requireDevRuntimeForTestMutation_();
+  ScriptApp.requireScopes(ScriptApp.AuthMode.FULL, [FOUNDATION_DEV_TRIGGER.scope]);
+  const all = ScriptApp.getProjectTriggers();
+  const matches = all.filter(t => t.getHandlerFunction() === FOUNDATION_DEV_TRIGGER.handler);
+  if (matches.length !== 0) throw new Error('EXISTING_FOUNDATION_DEV_TRIGGER');
+  if (all.length !== 0) throw new Error('UNEXPECTED_PROJECT_TRIGGER');
+  const created = ScriptApp.newTrigger(FOUNDATION_DEV_TRIGGER.handler).timeBased().after(60 * 1000).create();
+  const id = created.getUniqueId();
+  const after = ScriptApp.getProjectTriggers();
+  const verified = after.length === 1 && after[0].getHandlerFunction() === FOUNDATION_DEV_TRIGGER.handler && after[0].getUniqueId() === id;
+  if (!verified) {
+    after.filter(t => t.getUniqueId() === id).forEach(t => ScriptApp.deleteTrigger(t));
+    throw new Error('FOUNDATION_DEV_TRIGGER_CREATE_VERIFY_FAILED');
+  }
+  const result = {status:'PASS', handler:FOUNDATION_DEV_TRIGGER.handler, triggerUniqueId:id, fireAfterMs:60000};
+  console.log(JSON.stringify(result));
+  return result;
+}
+
+function cleanupFoundationDevParityTrigger() {
+  requireDevRuntimeForTestMutation_();
+  const all = ScriptApp.getProjectTriggers();
+  const matches = all.filter(t => t.getHandlerFunction() === FOUNDATION_DEV_TRIGGER.handler);
+  matches.forEach(t => ScriptApp.deleteTrigger(t));
+  const remaining = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === FOUNDATION_DEV_TRIGGER.handler);
+  const result = {status:remaining.length === 0 ? 'PASS' : 'FAIL', removedCount:matches.length, remainingCount:remaining.length};
+  console.log(JSON.stringify(result));
+  if (remaining.length !== 0) throw new Error('FOUNDATION_DEV_TRIGGER_CLEANUP_FAILED');
   return result;
 }
 
