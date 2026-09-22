@@ -41,16 +41,32 @@ function runScheduledProductionCollectorV03() {
 }
 
 function v03RunForTarget_(targetKey) {
-  const target = v03ResolveRuntimeTarget_(targetKey);
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(1)) {
-    console.log('SKIPPED: collector lock already held; no writes performed.');
-    return {run_status:'SKIPPED', reason:'LOCK_HELD'};
-  }
   try {
-    return v03Run_(target);
-  } finally {
-    lock.releaseLock();
+    const target = v03ResolveRuntimeTarget_(targetKey);
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(1)) {
+      console.log('SKIPPED: collector lock already held; no writes performed.');
+      return {run_status:'SKIPPED', reason:'LOCK_HELD'};
+    }
+    try {
+      return v03Run_(target);
+    } finally {
+      lock.releaseLock();
+    }
+  } catch (e) {
+    try {
+      console.error(JSON.stringify({
+        event:'COLLECTOR_RUN_UNCOMMITTED_FAILURE',
+        collector_version:COLLECTOR_V03.VERSION,
+        target_key:String(targetKey || ''),
+        error_name:String(e && e.name ? e.name : 'Error'),
+        error_message:String(e && e.message ? e.message : e),
+        error_stack:String(e && e.stack ? e.stack : '')
+      }));
+    } catch (_) {
+      // Logging failure must never replace the primary exception.
+    }
+    throw e;
   }
 }
 
