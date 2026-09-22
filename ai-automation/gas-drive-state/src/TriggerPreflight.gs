@@ -228,6 +228,46 @@ function cleanupFoundationDevParityTrigger() {
   return result;
 }
 
+function finalizeFoundationDevVerification() {
+  requireDevRuntimeForTestMutation_();
+  const cleanup = cleanupFoundationDevParityTrigger();
+  const ss = SpreadsheetApp.openById(COLLECTOR_V03.TEST_SPREADSHEET_ID);
+  const runsSheet = v03RequireSheet_(ss, COLLECTOR_V03.RUN_SHEET);
+  const rows = v03ObjectsFromSheet_(runsSheet)
+    .filter(r => String(r.collector_version) === COLLECTOR_V03.VERSION)
+    .filter(r => String(r.trigger_type) === 'MANUAL_TEST' || String(r.trigger_type) === 'TIME_TRIGGER_TEST');
+  const manual = rows.filter(r => String(r.trigger_type) === 'MANUAL_TEST').slice(-1)[0] || null;
+  const scheduled = rows.filter(r => String(r.trigger_type) === 'TIME_TRIGGER_TEST').slice(-1)[0] || null;
+  if (!manual) throw new Error('FOUNDATION_MANUAL_RUN_NOT_FOUND');
+  if (!scheduled) throw new Error('FOUNDATION_SCHEDULED_RUN_NOT_FOUND');
+  const comparableFields = [
+    'collector_version',
+    'scope_ref',
+    'attempted_count',
+    'success_count',
+    'error_count',
+    'stale_count_after_run',
+    'run_status'
+  ];
+  const mismatches = comparableFields.filter(k => String(manual[k]) !== String(scheduled[k]));
+  const scheduledAfterManual = new Date(String(scheduled.started_at)).getTime() >
+    new Date(String(manual.started_at)).getTime();
+  const result = {
+    status: mismatches.length === 0 && scheduledAfterManual && cleanup.remainingCount === 0 ? 'PASS' : 'FAIL',
+    manual_run_id: String(manual.run_id || ''),
+    scheduled_run_id: String(scheduled.run_id || ''),
+    manual_trigger_type: String(manual.trigger_type || ''),
+    scheduled_trigger_type: String(scheduled.trigger_type || ''),
+    comparableFields: comparableFields,
+    mismatches: mismatches,
+    scheduledAfterManual: scheduledAfterManual,
+    cleanup: cleanup
+  };
+  console.log(JSON.stringify(result));
+  if (result.status !== 'PASS') throw new Error('FOUNDATION_DEV_PARITY_FINALIZE_FAILED');
+  return result;
+}
+
 function requireProductionRuntimeForTriggerMutation_() {
   const currentScriptId = ScriptApp.getScriptId();
   if (currentScriptId !== COLLECTOR_V03.PROD_SCRIPT_ID) {
