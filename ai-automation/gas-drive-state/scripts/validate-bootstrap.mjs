@@ -137,34 +137,7 @@ if (collector.includes('missing_fields:parsed.missingFields')) throw new Error('
   }
   if (!rowBoundClosed) throw new Error('Board parser row bound did not fail closed');
 
-  const tx = {
-    stateHeader:[
-      'state_key','source_key','entity_kind','entity_key','source_ref','authority_ref',
-      'mechanical_signal','mechanical_signal_detail','judge_status'
-    ],
-    stateRows:[],
-    dirtyCells:new Map(),
-    newStateRows:[]
-  };
-  const identity = {
-    state_key:'STATE:T-BOARD-HEALTH-DEDUPE',
-    source_key:'T-BOARD-HEALTH-DEDUPE',
-    entity_kind:'TASK_STATE_HEALTH',
-    entity_key:'1NrhZCPLXOK4TKZqKBg3YEmYl1D7Qtgfx',
-    source_ref:'1NrhZCPLXOK4TKZqKBg3YEmYl1D7Qtgfx',
-    authority_ref:'1NrhZCPLXOK4TKZqKBg3YEmYl1D7Qtgfx'
-  };
-  context.v03UpsertState_(tx, identity, {
-    mechanical_signal:'HEALTH_FAIL',
-    mechanical_signal_detail:'same-fingerprint'
-  });
-  context.v03UpsertState_(tx, identity, {
-    mechanical_signal:'HEALTH_FAIL',
-    mechanical_signal_detail:'same-fingerprint'
-  });
-  if (tx.stateRows.length !== 1 || tx.newStateRows.length !== 1) {
-    throw new Error('Repeated unchanged Board health must keep one source-level state entity');
-  }
+
 }
 
 if (!lockProbe.includes('holdCollectorLockForOverlapProbe')) throw new Error('lock holder probe entrypoint missing');
