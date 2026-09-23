@@ -66,6 +66,80 @@ if (!collector.includes('1Txo4FJmWuJtq76e2v3nLrcw2fv1MlMTHJZnFj_lSvhE_7AZVr4UjC2
 if (!collector.includes('1r3y9O0_Du-QAoxKiJRP5nCSnLzrMo5IFTV3m1ex2KsvQCFNR5d0qoLBL')) throw new Error('approved Prod script ID binding missing');
 if (!collector.includes('19t_taz3ss_HXRCOncPv1AXhQjjmCOwf0EPh1g9Q3wVY')) throw new Error('approved Prod spreadsheet ID binding missing');
 if (!collectorAcceptance.includes('runCollectorV03Acceptance')) throw new Error('v0.3 acceptance entrypoint missing');
+if (!collector.includes('OPERATIONS_BOARD_STRUCTURAL_HEALTH_V1')) throw new Error('Board structural-health selector missing');
+if (!collector.includes('1NrhZCPLXOK4TKZqKBg3YEmYl1D7Qtgfx')) throw new Error('Board parser must remain pinned to exact OPERATIONS-BOARD file ID');
+if (!collector.includes('OPERATIONS_BOARD_MAX_BYTES: 262144')) throw new Error('Board byte bound missing');
+if (!collector.includes('OPERATIONS_BOARD_MAX_ROWS: 200')) throw new Error('Board row bound missing');
+if (!collector.includes('OPERATIONS_BOARD_MAX_ELIGIBLE_ROWS: 20')) throw new Error('Board eligible-row bound missing');
+if (!collector.includes("kind === 'FILE' && mode === 'BOUNDED_CONTENT'")) throw new Error('FILE BOUNDED_CONTENT dispatch missing');
+if (!collector.includes('v03ParseOperationsBoardHealth_')) throw new Error('Board structural-health parser missing');
+if (!collector.includes('DriveApp.getFileById')) throw new Error('Board exact content read path missing');
+if (!collectorAcceptance.includes('runOperationsBoardHealthDevReadAcceptance')) throw new Error('Board exact-read Dev acceptance entrypoint missing');
+if (!collectorAcceptance.includes('runOperationsBoardUnchangedHealthDedupAcceptance')) throw new Error('Board unchanged-health dedup acceptance entrypoint missing');
+if (collector.includes('missing_fields:parsed.missingFields')) throw new Error('Board health must not fail on non-identity field blanks');
+
+
+{
+  const context = {console};
+  vm.createContext(context);
+  new vm.Script(collector, {filename:'Collector.gs'}).runInContext(context);
+  const parse = context.v03ParseOperationsBoardHealth_;
+  if (typeof parse !== 'function') throw new Error('Board parser not callable in machine validation');
+
+  const clean = [
+    '| ID | 優先 | 状態 | 実行 | タスク |',
+    '|---|---|---|---|---|',
+    '| O-001 | P1 | READY | AI単独 | clean |',
+    '| O-002 | P2 | WATCH | 一緒に判断 | escaped \\| pipe |'
+  ].join('\n');
+  const cleanResult = parse(clean, {maxRows:10});
+  if (!cleanResult.healthy || cleanResult.eligibleRowCount !== 2) throw new Error('Board parser clean fixture failed');
+
+  const duplicate = [
+    '| ID | 優先 | 状態 | 実行 | タスク |',
+    '|---|---|---|---|---|',
+    '| O-050 | P2 | READY | AI単独 | a |',
+    '| O-051 | P2 | READY | AI単独 | b |',
+    '| O-050 | P1 | WATCH | 一緒に判断 | c |',
+    '| O-051 | P2 | READY | AI単独 | d |'
+  ].join('\n');
+  const dupResult = parse(duplicate, {maxRows:10});
+  if (dupResult.healthy) throw new Error('Board parser duplicate fixture must fail health');
+  if (JSON.stringify(dupResult.duplicateIds) !== JSON.stringify(['O-050','O-051'])) {
+    throw new Error('Board parser duplicate fixture did not report exact IDs');
+  }
+
+  const nonIdentityBlank = [
+    '| ID | 優先 | 状態 | 実行 | タスク |',
+    '|---|---|---|---|---|',
+    '| O-777 |  | READY |  |  |'
+  ].join('\n');
+  const nonIdentityBlankResult = parse(nonIdentityBlank, {maxRows:10});
+  if (!nonIdentityBlankResult.healthy) {
+    throw new Error('Board health must remain identity-focused when non-identity cells are blank');
+  }
+
+  const missing = [
+    '| ID | 優先 | 状態 | 実行 | タスク |',
+    '|---|---|---|---|---|',
+    '|  | P1 | READY | AI単独 | missing |'
+  ].join('\n');
+  const missingResult = parse(missing, {maxRows:10});
+  if (missingResult.healthy || !missingResult.invalidRows.some(x => x.reason === 'MISSING_ID')) {
+    throw new Error('Board parser missing-ID fixture failed');
+  }
+
+  let rowBoundClosed = false;
+  try {
+    parse(duplicate, {maxRows:2});
+  } catch (e) {
+    rowBoundClosed = Boolean(e && e.v03code === 'BOARD_ROW_LIMIT');
+  }
+  if (!rowBoundClosed) throw new Error('Board parser row bound did not fail closed');
+
+
+}
+
 if (!lockProbe.includes('holdCollectorLockForOverlapProbe')) throw new Error('lock holder probe entrypoint missing');
 if (!lockProbe.includes('runCollectorLockContenderProbe')) throw new Error('lock contender probe entrypoint missing');
 if (!lockProbe.includes("run_status !== 'SKIPPED'") || !lockProbe.includes("reason !== 'LOCK_HELD'")) throw new Error('lock contender assertion missing');
