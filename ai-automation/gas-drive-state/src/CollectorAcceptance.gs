@@ -239,7 +239,7 @@ function v03RunOperationsBoardParserFixtureAcceptance_() {
   ].join('\n');
   const cleanResult = v03ParseOperationsBoardHealth_(clean, {maxRows:10});
   v03AssertAccept_(cleanResult.healthy === true, 'clean Board fixture must be healthy');
-  v03AssertAccept_(cleanResult.rowCount === 2, 'clean Board fixture row count mismatch');
+  v03AssertAccept_(cleanResult.eligibleRowCount === 2, 'clean Board fixture row count mismatch');
 
   const duplicate = [
     '| ID | 優先 | 状態 | 実行 | タスク |',
@@ -304,7 +304,7 @@ function runOperationsBoardHealthDevReadAcceptance() {
     blob.getDataAsString('UTF-8'),
     {maxRows:COLLECTOR_V03.OPERATIONS_BOARD_MAX_ROWS}
   );
-  v03AssertAccept_(parsed.rowCount > 0, 'Board parser returned no task rows');
+  v03AssertAccept_(parsed.eligibleRowCount > 0, 'Board parser returned no task rows');
   v03AssertAccept_(
     parsed.duplicateIds.includes('O-050') && parsed.duplicateIds.includes('O-051'),
     'current Board must reproduce Scout COV-S04 duplicate identity finding'
@@ -315,7 +315,7 @@ function runOperationsBoardHealthDevReadAcceptance() {
     file_id:fileId,
     file_name:String(meta.name || ''),
     byte_length:byteLength,
-    row_count:parsed.rowCount,
+    eligible_row_count:parsed.eligibleRowCount,
     duplicate_ids:parsed.duplicateIds,
     scout_parity_expected_duplicates:['O-050','O-051']
   };
