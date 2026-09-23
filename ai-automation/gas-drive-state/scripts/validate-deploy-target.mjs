@@ -25,7 +25,8 @@ const allowedFiles = new Set([
   path.resolve(root, 'LockProbe.gs'),
   path.resolve(root, 'MechanicalHealth.gs'),
   path.resolve(root, 'TriggerPreflight.gs'),
-  path.resolve(root, 'DriveMutation.gs')
+  path.resolve(root, 'DriveMutation.gs'),
+  path.resolve(root, 'DirectoryContract.gs')
 ]);
 
 const discovered = [];
