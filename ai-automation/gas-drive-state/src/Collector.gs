@@ -490,7 +490,6 @@ function v03ParseMarkdownRow_(line) {
   }
 
   if (current.trim()) cells.push(current.trim());
-  if (cells.length && cells[cells.length - 1] === '') cells.pop();
   return cells;
 }
 
