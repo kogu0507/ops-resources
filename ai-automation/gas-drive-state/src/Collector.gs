@@ -6,7 +6,7 @@
  * in one Google Sheets spreadsheets.batchUpdate request.
  */
 const COLLECTOR_V03 = Object.freeze({
-  VERSION: 'collector-v0.5.0',
+  VERSION: 'collector-v0.6.0-dev-board-health',
   DEV_SCRIPT_ID: '1Txo4FJmWuJtq76e2v3nLrcw2fv1MlMTHJZnFj_lSvhE_7AZVr4UjC2zs',
   PROD_SCRIPT_ID: '1r3y9O0_Du-QAoxKiJRP5nCSnLzrMo5IFTV3m1ex2KsvQCFNR5d0qoLBL',
   TEST_SPREADSHEET_ID: '1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0',
@@ -14,7 +14,11 @@ const COLLECTOR_V03 = Object.freeze({
   SOURCE_SHEET: 'SOURCES',
   STATE_SHEET: 'DRIVE_STATE',
   RUN_SHEET: 'COLLECTION_RUNS',
-  MAX_PAGES: 20
+  MAX_PAGES: 20,
+  OPERATIONS_BOARD_SELECTOR: 'OPERATIONS_BOARD_STRUCTURAL_HEALTH_V1',
+  OPERATIONS_BOARD_FILE_ID: '1NrhZCPLXOK4TKZqKBg3YEmYl1D7Qtgfx',
+  OPERATIONS_BOARD_MAX_BYTES: 262144,
+  OPERATIONS_BOARD_MAX_ROWS: 200
 });
 
 function requireDevRuntimeForTestMutation_() {
@@ -164,6 +168,16 @@ function v03Run_(target) {
 function v03CollectSource_(tx, source) {
   v03ValidateSource_(source);
   const kind = String(source.source_kind || '');
+  const mode = String(source.collection_mode || 'METADATA');
+  if (kind === 'FILE' && mode === 'BOUNDED_CONTENT') {
+    if (String(source.selector || '') !== COLLECTOR_V03.OPERATIONS_BOARD_SELECTOR) {
+      throw v03Error_(
+        'UNSUPPORTED_BOUNDED_CONTENT_SELECTOR',
+        'FILE BOUNDED_CONTENT requires exact approved selector'
+      );
+    }
+    return v03CollectOperationsBoardHealth_(tx, source);
+  }
   if (kind === 'FILE') return v03CollectFile_(tx, source);
   if (kind === 'SHEET_RANGE') return v03CollectSheetRange_(tx, source);
   if (kind === 'FOLDER_BOUNDED') return v03CollectFolder_(tx, source);
@@ -242,6 +256,233 @@ function v03CollectFile_(tx, s) {
     mechanical_signal_detail:signal === 'CHANGED' ? 'metadata version changed' : 'exact metadata read'
   });
   return {ok:true, source_key:String(s.source_key), code:'SUCCESS'};
+}
+
+function v03CollectOperationsBoardHealth_(tx, s) {
+  if (String(s.source_ref) !== COLLECTOR_V03.OPERATIONS_BOARD_FILE_ID) {
+    throw v03Error_(
+      'OPERATIONS_BOARD_IDENTITY_MISMATCH',
+      'approved OPERATIONS-BOARD parser is pinned to one exact file id'
+    );
+  }
+
+  const now = new Date().toISOString();
+  let meta;
+  try {
+    meta = Drive.Files.get(String(s.source_ref), {
+      fields:'id,name,mimeType,modifiedTime,version,trashed,size'
+    });
+  } catch (e) {
+    throw v03Error_(
+      'NOT_FOUND_OR_INACCESSIBLE',
+      'exact OPERATIONS-BOARD lookup failed: ' + String(e && e.message ? e.message : e)
+    );
+  }
+
+  if (meta.trashed === true) {
+    throw v03Error_('NOT_FOUND', 'exact OPERATIONS-BOARD is trashed');
+  }
+  if (s.expected_identity && String(meta.name) !== String(s.expected_identity)) {
+    v03IdentityFailure_(tx, s, 'TASK_STATE_HEALTH', String(meta.id),
+      'expected name "'+s.expected_identity+'" got "'+meta.name+'"');
+    return {ok:false, source_key:String(s.source_key), code:'IDENTITY_MISMATCH'};
+  }
+
+  const declaredSize = Number(meta.size || 0);
+  if (Number.isFinite(declaredSize) && declaredSize > COLLECTOR_V03.OPERATIONS_BOARD_MAX_BYTES) {
+    throw v03Error_(
+      'CONTENT_TOO_LARGE',
+      'OPERATIONS-BOARD exceeds byte bound before content read: ' + declaredSize
+    );
+  }
+
+  let blob;
+  try {
+    blob = DriveApp.getFileById(String(s.source_ref)).getBlob();
+  } catch (e) {
+    throw v03Error_(
+      'CONTENT_READ_FAILED',
+      'exact OPERATIONS-BOARD content read failed: ' + String(e && e.message ? e.message : e)
+    );
+  }
+  const byteLength = blob.getBytes().length;
+  if (byteLength > COLLECTOR_V03.OPERATIONS_BOARD_MAX_BYTES) {
+    throw v03Error_(
+      'CONTENT_TOO_LARGE',
+      'OPERATIONS-BOARD exceeds byte bound after content read: ' + byteLength
+    );
+  }
+
+  const text = blob.getDataAsString('UTF-8');
+  const parsed = v03ParseOperationsBoardHealth_(text, {
+    maxRows: COLLECTOR_V03.OPERATIONS_BOARD_MAX_ROWS
+  });
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text)
+    .map(b => ('0'+((b<0?b+256:b).toString(16))).slice(-2)).join('');
+  const version = 'board-sha256:' + digest;
+  const stateKey = 'STATE:' + String(s.source_key);
+  const existing = v03FindUniqueState_(tx, stateKey);
+  const changed = Boolean(
+    existing &&
+    existing.source_version_signal &&
+    String(existing.source_version_signal) !== version
+  );
+  const signal = parsed.healthy ? (changed ? 'CHANGED' : 'NONE') : 'HEALTH_FAIL';
+  const detail = JSON.stringify({
+    contract:'OPERATIONS_BOARD_STRUCTURAL_HEALTH_V1',
+    rows:parsed.rowCount,
+    duplicate_ids:parsed.duplicateIds,
+    invalid_rows:parsed.invalidRows,
+    missing_fields:parsed.missingFields
+  });
+
+  v03UpsertState_(
+    tx,
+    v03BaseIdentity_(s, 'TASK_STATE_HEALTH', String(meta.id), String(meta.id)),
+    {
+      observed_name:String(meta.name||''),
+      observed_mime_type:String(meta.mimeType||''),
+      observed_modified_at:String(meta.modifiedTime||''),
+      source_version_signal:version,
+      collected_at:now,
+      collection_status:'SUCCESS',
+      last_collection_success_at:now,
+      last_collection_error_at:'',
+      last_collection_error_code:'',
+      last_collection_error:'',
+      stale_after_minutes:Number(s.stale_after_minutes),
+      stale_state:'FRESH',
+      mechanical_signal:signal,
+      mechanical_signal_detail:detail
+    }
+  );
+
+  return {
+    ok:true,
+    source_key:String(s.source_key),
+    code:parsed.healthy ? 'SUCCESS' : 'STRUCTURAL_HEALTH_FAIL',
+    structural_health:parsed
+  };
+}
+
+function v03ParseOperationsBoardHealth_(text, options) {
+  const opts = options || {};
+  const maxRows = Number(opts.maxRows || COLLECTOR_V03.OPERATIONS_BOARD_MAX_ROWS);
+  if (!Number.isFinite(maxRows) || maxRows <= 0) {
+    throw v03Error_('MALFORMED_CONFIG', 'invalid OPERATIONS-BOARD row bound');
+  }
+
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const expectedHeader = ['ID','優先','状態','実行','タスク'];
+  const headerIndexes = [];
+  lines.forEach((line, index) => {
+    const cells = v03ParseMarkdownRow_(line);
+    if (cells && cells.length === expectedHeader.length &&
+        cells.every((cell, i) => cell === expectedHeader[i])) {
+      headerIndexes.push(index);
+    }
+  });
+  if (headerIndexes.length === 0) {
+    throw v03Error_('BOARD_HEADER_MISSING', 'OPERATIONS-BOARD task table header not found');
+  }
+  if (headerIndexes.length !== 1) {
+    throw v03Error_('BOARD_HEADER_AMBIGUOUS',
+      'expected one OPERATIONS-BOARD task table header, got ' + headerIndexes.length);
+  }
+
+  const headerIndex = headerIndexes[0];
+  const separator = v03ParseMarkdownRow_(lines[headerIndex + 1] || '');
+  if (!separator || separator.length !== expectedHeader.length ||
+      !separator.every(cell => /^:?-{3,}:?$/.test(cell))) {
+    throw v03Error_('BOARD_SEPARATOR_INVALID', 'OPERATIONS-BOARD task table separator invalid');
+  }
+
+  const ids = [];
+  const invalidRows = [];
+  const missingFields = [];
+  let rowCount = 0;
+
+  for (let i = headerIndex + 2; i < lines.length; i++) {
+    const raw = lines[i];
+    if (!/^\s*\|/.test(raw)) break;
+    const cells = v03ParseMarkdownRow_(raw);
+    rowCount++;
+    if (rowCount > maxRows) {
+      throw v03Error_('BOARD_ROW_LIMIT', 'OPERATIONS-BOARD task table row bound exceeded');
+    }
+
+    if (!cells || cells.length !== expectedHeader.length) {
+      invalidRows.push({row:rowCount, reason:'COLUMN_COUNT'});
+      continue;
+    }
+
+    const id = String(cells[0] || '').trim();
+    if (!/^O-\d{3}$/.test(id)) {
+      invalidRows.push({row:rowCount, reason:id ? 'INVALID_ID' : 'MISSING_ID'});
+    } else {
+      ids.push(id);
+    }
+
+    expectedHeader.forEach((name, col) => {
+      if (!String(cells[col] || '').trim()) {
+        missingFields.push({row:rowCount, field:name});
+      }
+    });
+  }
+
+  if (rowCount === 0) {
+    throw v03Error_('BOARD_TABLE_EMPTY', 'OPERATIONS-BOARD task table has no task rows');
+  }
+
+  const counts = {};
+  ids.forEach(id => counts[id] = (counts[id] || 0) + 1);
+  const duplicateIds = Object.keys(counts).filter(id => counts[id] > 1).sort();
+
+  const boundedInvalidRows = invalidRows.slice(0, 20);
+  const boundedMissingFields = missingFields.slice(0, 20);
+  return {
+    healthy: duplicateIds.length === 0 &&
+      invalidRows.length === 0 &&
+      missingFields.length === 0,
+    rowCount:rowCount,
+    duplicateIds:duplicateIds,
+    invalidRows:boundedInvalidRows,
+    missingFields:boundedMissingFields,
+    truncatedIssues: invalidRows.length > boundedInvalidRows.length ||
+      missingFields.length > boundedMissingFields.length
+  };
+}
+
+function v03ParseMarkdownRow_(line) {
+  const raw = String(line || '').trim();
+  if (!raw.startsWith('|')) return null;
+
+  const cells = [];
+  let current = '';
+  let escaped = false;
+  for (let i = 1; i < raw.length; i++) {
+    const ch = raw[i];
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = true;
+      current += ch;
+      continue;
+    }
+    if (ch === '|') {
+      cells.push(current.trim().replace(/\\\|/g, '|'));
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+
+  if (current.trim()) cells.push(current.trim());
+  if (cells.length && cells[cells.length - 1] === '') cells.pop();
+  return cells;
 }
 
 function v03CollectSheetRange_(tx, s) {
