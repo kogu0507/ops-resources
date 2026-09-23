@@ -1,0 +1,94 @@
+name: GAS Prod One-shot Board Health
+
+on:
+  push:
+    branches:
+      - ai-auto-prod-board-health-one-shot
+    paths:
+      - ".github/workflows/gas-prod-one-shot-board-health.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gas-prod-one-shot-board-health
+  cancel-in-progress: false
+
+jobs:
+  materialize-prod:
+    environment: development
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-automation/gas-drive-state
+    env:
+      EXPECTED_MAIN_SHA: b85620c5462bfc3e9c2087522bf1ec00d9ee291c
+      EXPECTED_PROD_SCRIPT_ID: 1r3y9O0_Du-QAoxKiJRP5nCSnLzrMo5IFTV3m1ex2KsvQCFNR5d0qoLBL
+    steps:
+      - name: Checkout exact reviewed main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_MAIN_SHA }}
+
+      - name: Verify checked-out SHA
+        run: |
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$EXPECTED_MAIN_SHA" || {
+            echo "MAIN_SHA_MISMATCH expected=$EXPECTED_MAIN_SHA actual=$actual"
+            exit 1
+          }
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install clasp
+        run: npm install --no-audit --no-fund
+
+      - name: Require existing Dev clasp credential only
+        env:
+          CLASPRC_JSON_DEV: ${{ secrets.CLASPRC_JSON_DEV }}
+        run: |
+          test -n "$CLASPRC_JSON_DEV" || {
+            echo "CLASPRC_JSON_DEV missing"
+            exit 1
+          }
+          printf '%s' "$CLASPRC_JSON_DEV" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+
+      - name: Materialize exact Production mapping locally
+        run: |
+          printf '{"scriptId":"%s","rootDir":"src"}\n' "$EXPECTED_PROD_SCRIPT_ID" > .clasp.prod.board-health.json
+          chmod 600 .clasp.prod.board-health.json
+
+      - name: Exact target and source allowlist preflight
+        env:
+          EXPECTED_SCRIPT_ID: ${{ env.EXPECTED_PROD_SCRIPT_ID }}
+          EXPECTED_ROOT_DIR: src
+        run: node scripts/validate-deploy-target.mjs .clasp.prod.board-health.json
+
+      - name: Read-only access check via clasp status
+        run: npx clasp status --project .clasp.prod.board-health.json
+
+      - name: Push reviewed source to exact Production target
+        run: npx clasp push --force --project .clasp.prod.board-health.json
+
+      - name: Prepare isolated Production readback workspace
+        run: node scripts/prepare-drift-project.mjs .clasp.prod.board-health.json .gas-prod-board-health/pulled
+
+      - name: Pull exact Production target after push
+        run: |
+          (cd .gas-prod-board-health/pulled && ../../node_modules/.bin/clasp pull)
+          rm -f .gas-prod-board-health/pulled/.clasp.json
+          find .gas-prod-board-health/pulled -maxdepth 1 -type f -print | sort
+
+      - name: Verify reviewed GitHub source matches Production GAS readback
+        run: |
+          node scripts/compare-gas-source.mjs "$PWD/src" "$PWD/.gas-prod-board-health/pulled"
+          echo "PRODUCTION_SOURCE_MATERIALIZATION: SUCCESS"
+          echo "READBACK_COMPARE: MATCH"
+
+      - name: Remove temporary credential and readback files
+        if: always()
+        run: rm -rf "$HOME/.clasprc.json" .clasp.prod.board-health.json .gas-prod-board-health
