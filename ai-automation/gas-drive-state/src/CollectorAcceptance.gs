@@ -8,6 +8,7 @@
  */
 function runCollectorV03Acceptance() {
   requireDevRuntimeForTestMutation_();
+  v03RunOperationsBoardParserFixtureAcceptance_();
   const ss = SpreadsheetApp.openById(COLLECTOR_V03.TEST_SPREADSHEET_ID);
   const state = ss.getSheetByName(COLLECTOR_V03.STATE_SHEET);
 
@@ -228,3 +229,97 @@ function v03TestDeleteRowsByStateKey_(sheet, stateKey) {
 function v03AssertAccept_(condition,message) {
   if (!condition) throw new Error('V03 ACCEPTANCE FAIL: '+message);
 }
+
+function v03RunOperationsBoardParserFixtureAcceptance_() {
+  const clean = [
+    '| ID | 優先 | 状態 | 実行 | タスク |',
+    '|---|---|---|---|---|',
+    '| O-001 | P1 | READY | AI単独 | first |',
+    '| O-002 | P2 | WATCH | 一緒に判断 | second with escaped \\| pipe |'
+  ].join('\n');
+  const cleanResult = v03ParseOperationsBoardHealth_(clean, {maxRows:10});
+  v03AssertAccept_(cleanResult.healthy === true, 'clean Board fixture must be healthy');
+  v03AssertAccept_(cleanResult.rowCount === 2, 'clean Board fixture row count mismatch');
+
+  const duplicate = [
+    '| ID | 優先 | 状態 | 実行 | タスク |',
+    '|---|---|---|---|---|',
+    '| O-050 | P2 | READY | AI単独 | first |',
+    '| O-051 | P2 | READY | AI単独 | second |',
+    '| O-050 | P1 | WATCH | 一緒に判断 | duplicate |',
+    '| O-051 | P2 | READY | AI単独 | duplicate 2 |'
+  ].join('\n');
+  const duplicateResult = v03ParseOperationsBoardHealth_(duplicate, {maxRows:10});
+  v03AssertAccept_(duplicateResult.healthy === false, 'duplicate fixture must fail structural health');
+  v03AssertAccept_(
+    JSON.stringify(duplicateResult.duplicateIds) === JSON.stringify(['O-050','O-051']),
+    'duplicate fixture must report exact sorted duplicate IDs'
+  );
+
+  const missingId = [
+    '| ID | 優先 | 状態 | 実行 | タスク |',
+    '|---|---|---|---|---|',
+    '|  | P1 | READY | AI単独 | missing identity |'
+  ].join('\n');
+  const missingResult = v03ParseOperationsBoardHealth_(missingId, {maxRows:10});
+  v03AssertAccept_(missingResult.healthy === false, 'missing-ID fixture must fail structural health');
+  v03AssertAccept_(
+    missingResult.invalidRows.some(x => x.reason === 'MISSING_ID'),
+    'missing-ID fixture must report MISSING_ID'
+  );
+
+  let bounded = false;
+  try {
+    v03ParseOperationsBoardHealth_(duplicate, {maxRows:2});
+  } catch (e) {
+    bounded = Boolean(e && e.v03code === 'BOARD_ROW_LIMIT');
+  }
+  v03AssertAccept_(bounded, 'row limit must fail closed');
+  console.log('PASS: OPERATIONS-BOARD pure parser fixtures.');
+}
+
+function runOperationsBoardHealthDevReadAcceptance() {
+  requireDevRuntimeForTestMutation_();
+  const fileId = COLLECTOR_V03.OPERATIONS_BOARD_FILE_ID;
+  const meta = Drive.Files.get(fileId, {
+    fields:'id,name,mimeType,modifiedTime,trashed,size'
+  });
+  v03AssertAccept_(String(meta.id) === fileId, 'Board exact file ID mismatch');
+  v03AssertAccept_(meta.trashed !== true, 'Board is unexpectedly trashed');
+
+  const declaredSize = Number(meta.size || 0);
+  v03AssertAccept_(
+    !Number.isFinite(declaredSize) || declaredSize <= COLLECTOR_V03.OPERATIONS_BOARD_MAX_BYTES,
+    'Board exceeds configured pre-read byte bound'
+  );
+
+  const blob = DriveApp.getFileById(fileId).getBlob();
+  const byteLength = blob.getBytes().length;
+  v03AssertAccept_(
+    byteLength <= COLLECTOR_V03.OPERATIONS_BOARD_MAX_BYTES,
+    'Board exceeds configured post-read byte bound'
+  );
+
+  const parsed = v03ParseOperationsBoardHealth_(
+    blob.getDataAsString('UTF-8'),
+    {maxRows:COLLECTOR_V03.OPERATIONS_BOARD_MAX_ROWS}
+  );
+  v03AssertAccept_(parsed.rowCount > 0, 'Board parser returned no task rows');
+  v03AssertAccept_(
+    parsed.duplicateIds.includes('O-050') && parsed.duplicateIds.includes('O-051'),
+    'current Board must reproduce Scout COV-S04 duplicate identity finding'
+  );
+
+  const result = {
+    status:'PASS',
+    file_id:fileId,
+    file_name:String(meta.name || ''),
+    byte_length:byteLength,
+    row_count:parsed.rowCount,
+    duplicate_ids:parsed.duplicateIds,
+    scout_parity_expected_duplicates:['O-050','O-051']
+  };
+  console.log(JSON.stringify(result));
+  return result;
+}
+
