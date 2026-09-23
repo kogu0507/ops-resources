@@ -278,6 +278,71 @@ function v03RunOperationsBoardParserFixtureAcceptance_() {
   console.log('PASS: OPERATIONS-BOARD pure parser fixtures.');
 }
 
+
+function runOperationsBoardUnchangedHealthDedupAcceptance() {
+  requireDevRuntimeForTestMutation_();
+
+  const source = {
+    source_key:'T-BOARD-HEALTH-DEDUPE',
+    source_kind:'FILE',
+    source_ref:COLLECTOR_V03.OPERATIONS_BOARD_FILE_ID,
+    authority_ref:COLLECTOR_V03.OPERATIONS_BOARD_FILE_ID,
+    selector:COLLECTOR_V03.OPERATIONS_BOARD_SELECTOR,
+    collection_mode:'BOUNDED_CONTENT',
+    stale_after_minutes:60,
+    expected_identity:'OPERATIONS-BOARD.md'
+  };
+
+  const stateHeader = [
+    'state_key','source_key','entity_kind','entity_key','source_ref','authority_ref',
+    'observed_name','observed_mime_type','observed_modified_at','source_version_signal',
+    'collected_at','collection_status','last_collection_success_at','last_collection_error_at',
+    'last_collection_error_code','last_collection_error','stale_after_minutes','stale_state',
+    'mechanical_signal','mechanical_signal_detail','judge_status'
+  ];
+  const tx = {
+    stateHeader:stateHeader,
+    stateRows:[],
+    dirtyCells:new Map(),
+    newStateRows:[],
+    stateSheetId:0,
+    runSheetId:0,
+    runHeader:[],
+    runAppend:null,
+    spreadsheetId:'TEST'
+  };
+
+  const first = v03CollectOperationsBoardHealth_(tx, source);
+  v03AssertAccept_(first.ok === true, 'first Board health collection failed');
+  v03AssertAccept_(tx.stateRows.length === 1, 'first Board health collection must create one state row');
+  const firstKey = String(tx.stateRows[0].state_key);
+  const firstDetail = String(tx.stateRows[0].mechanical_signal_detail);
+  v03AssertAccept_(String(tx.stateRows[0].mechanical_signal) === 'HEALTH_FAIL',
+    'current Board duplicate IDs should produce HEALTH_FAIL');
+
+  const second = v03CollectOperationsBoardHealth_(tx, source);
+  v03AssertAccept_(second.ok === true, 'second Board health collection failed');
+  v03AssertAccept_(tx.stateRows.length === 1,
+    'repeated unchanged Board health must not create a second state entity');
+  v03AssertAccept_(String(tx.stateRows[0].state_key) === firstKey,
+    'repeated unchanged Board health must preserve stable state_key');
+  v03AssertAccept_(String(tx.stateRows[0].mechanical_signal) === 'HEALTH_FAIL',
+    'repeated unchanged Board health must remain HEALTH_FAIL');
+  v03AssertAccept_(String(tx.stateRows[0].mechanical_signal_detail) === firstDetail,
+    'repeated unchanged Board health must preserve identical mechanical detail');
+
+  const result = {
+    status:'PASS',
+    source_key:source.source_key,
+    state_key:firstKey,
+    state_entity_count:tx.stateRows.length,
+    mechanical_signal:String(tx.stateRows[0].mechanical_signal),
+    duplicate_ids:first.structural_health.duplicateIds
+  };
+  console.log(JSON.stringify(result));
+  return result;
+}
+
 function runOperationsBoardHealthDevReadAcceptance() {
   requireDevRuntimeForTestMutation_();
   const fileId = COLLECTOR_V03.OPERATIONS_BOARD_FILE_ID;
