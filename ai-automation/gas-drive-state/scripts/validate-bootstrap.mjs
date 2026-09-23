@@ -70,6 +70,7 @@ if (!collector.includes('OPERATIONS_BOARD_STRUCTURAL_HEALTH_V1')) throw new Erro
 if (!collector.includes('1NrhZCPLXOK4TKZqKBg3YEmYl1D7Qtgfx')) throw new Error('Board parser must remain pinned to exact OPERATIONS-BOARD file ID');
 if (!collector.includes('OPERATIONS_BOARD_MAX_BYTES: 262144')) throw new Error('Board byte bound missing');
 if (!collector.includes('OPERATIONS_BOARD_MAX_ROWS: 200')) throw new Error('Board row bound missing');
+if (!collector.includes('OPERATIONS_BOARD_MAX_ELIGIBLE_ROWS: 20')) throw new Error('Board eligible-row bound missing');
 if (!collector.includes("kind === 'FILE' && mode === 'BOUNDED_CONTENT'")) throw new Error('FILE BOUNDED_CONTENT dispatch missing');
 if (!collector.includes('v03ParseOperationsBoardHealth_')) throw new Error('Board structural-health parser missing');
 if (!collector.includes('DriveApp.getFileById')) throw new Error('Board exact content read path missing');
@@ -89,7 +90,7 @@ if (!collectorAcceptance.includes('runOperationsBoardHealthDevReadAcceptance')) 
     '| O-002 | P2 | WATCH | 一緒に判断 | escaped \\| pipe |'
   ].join('\n');
   const cleanResult = parse(clean, {maxRows:10});
-  if (!cleanResult.healthy || cleanResult.rowCount !== 2) throw new Error('Board parser clean fixture failed');
+  if (!cleanResult.healthy || cleanResult.eligibleRowCount !== 2) throw new Error('Board parser clean fixture failed');
 
   const duplicate = [
     '| ID | 優先 | 状態 | 実行 | タスク |',
