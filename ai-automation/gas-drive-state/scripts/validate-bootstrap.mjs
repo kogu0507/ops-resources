@@ -75,6 +75,9 @@ if (!collector.includes("kind === 'FILE' && mode === 'BOUNDED_CONTENT'")) throw 
 if (!collector.includes('v03ParseOperationsBoardHealth_')) throw new Error('Board structural-health parser missing');
 if (!collector.includes('DriveApp.getFileById')) throw new Error('Board exact content read path missing');
 if (!collectorAcceptance.includes('runOperationsBoardHealthDevReadAcceptance')) throw new Error('Board exact-read Dev acceptance entrypoint missing');
+if (!collectorAcceptance.includes('runOperationsBoardUnchangedHealthDedupAcceptance')) throw new Error('Board unchanged-health dedup acceptance entrypoint missing');
+if (collector.includes('missing_fields:parsed.missingFields')) throw new Error('Board health must not fail on non-identity field blanks');
+
 
 {
   const context = {console};
