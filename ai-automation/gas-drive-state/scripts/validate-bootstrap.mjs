@@ -14,6 +14,7 @@ const required = [
   `${root}/src/MechanicalHealth.gs`,
   `${root}/src/TriggerPreflight.gs`,
   `${root}/src/DriveMutation.gs`,
+  `${root}/src/DirectoryContract.gs`,
   `${root}/version.json`,
   `${root}/scripts/validate-deploy-target.mjs`,
   `${root}/scripts/prepare-drift-project.mjs`,
@@ -41,6 +42,7 @@ const lockProbe = fs.readFileSync(`${root}/src/LockProbe.gs`, 'utf8');
 const mechanicalHealth = fs.readFileSync(`${root}/src/MechanicalHealth.gs`, 'utf8');
 const triggerPreflight = fs.readFileSync(`${root}/src/TriggerPreflight.gs`, 'utf8');
 const driveMutation = fs.readFileSync(`${root}/src/DriveMutation.gs`, 'utf8');
+const directoryContract = fs.readFileSync(`${root}/src/DirectoryContract.gs`, 'utf8');
 const mechanicalVersion = JSON.parse(fs.readFileSync(`${root}/version.json`, 'utf8'));
 
 for (const [name, source] of [
@@ -51,7 +53,8 @@ for (const [name, source] of [
   ['LockProbe.gs', lockProbe],
   ['MechanicalHealth.gs', mechanicalHealth],
   ['TriggerPreflight.gs', triggerPreflight],
-  ['DriveMutation.gs', driveMutation]
+  ['DriveMutation.gs', driveMutation],
+  ['DirectoryContract.gs', directoryContract]
 ]) {
   new vm.Script(source, {filename:name});
 }
@@ -166,6 +169,24 @@ if (!triggerPreflight.includes('BLOCKED_UNEXPECTED_PROJECT_TRIGGER')) throw new 
 if (!triggerPreflight.includes('PRODUCTION_TRIGGER_CREATE_VERIFY_FAILED')) throw new Error('Production trigger post-create verification missing');
 if (!triggerPreflight.includes('PRODUCTION_TRIGGER_IDENTITY_MISMATCH')) throw new Error('Production trigger exact-ID removal guard missing');
 if (/Drive\.Files\.(create|copy|update|delete|remove)/.test(triggerPreflight)) throw new Error('M2-B trigger source must not mutate Drive');
+if (!directoryContract.includes('runDirectoryContractFixtureAcceptance')) throw new Error('directory contract fixture acceptance missing');
+if (!directoryContract.includes('runDirectoryContractDevProbe')) throw new Error('directory contract Dev probe missing');
+if (!directoryContract.includes("mode:'DETECT_ONLY'")) throw new Error('directory contract PoC must remain DETECT_ONLY');
+if (!directoryContract.includes('requireDevRuntimeForTestMutation_();')) throw new Error('directory contract probe must remain Dev-guarded');
+if (/Drive\\.Files\\.(create|copy|update|delete|remove)|DriveApp\\.(create|move|setTrashed)/.test(directoryContract)) throw new Error('directory contract PoC must remain Drive-read-only');
+
+{
+  const context = {console};
+  vm.createContext(context);
+  new vm.Script(directoryContract, {filename:'DirectoryContract.gs'}).runInContext(context);
+  const evaluate = context.evaluateDirectoryContractSnapshot_;
+  if (typeof evaluate !== 'function') throw new Error('directory contract evaluator not callable');
+  const result = evaluate([{id:'1',name:'README.md',mimeType:'text/markdown',trashed:false}], {allowedMimeTypes:['text/markdown'],allowedExtensions:['.md'],requiredNames:['README.md']});
+  if (!result.healthy) throw new Error('directory contract clean machine fixture failed');
+  const bad = evaluate([{id:'1',name:'x.txt',mimeType:'text/plain',trashed:false}], {allowedMimeTypes:['text/markdown'],allowedExtensions:['.md'],requiredNames:['README.md']});
+  if (bad.healthy || !bad.violations.some(x => x.code === 'MIME_NOT_ALLOWED') || !bad.violations.some(x => x.code === 'REQUIRED_FILE_MISSING')) throw new Error('directory contract negative machine fixture failed');
+}
+
 if (!driveMutation.includes('createMechanicalDriveFile')) throw new Error('M2-C create primitive missing');
 if (!driveMutation.includes('copyMechanicalDriveFile')) throw new Error('M2-C copy primitive missing');
 if (!driveMutation.includes('runMechanicalM2CAcceptance')) throw new Error('M2-C acceptance missing');
