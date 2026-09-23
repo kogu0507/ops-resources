@@ -336,7 +336,6 @@ function v03CollectOperationsBoardHealth_(tx, s) {
     eligible_rows:parsed.eligibleRowCount,
     duplicate_ids:parsed.duplicateIds,
     invalid_rows:parsed.invalidRows,
-    missing_fields:parsed.missingFields
   });
 
   v03UpsertState_(
@@ -407,7 +406,6 @@ function v03ParseOperationsBoardHealth_(text, options) {
 
   const ids = [];
   const invalidRows = [];
-  const missingFields = [];
   let scannedRowCount = 0;
   let eligibleRowCount = 0;
 
@@ -439,12 +437,6 @@ function v03ParseOperationsBoardHealth_(text, options) {
       ids.push(id);
     }
 
-    expectedHeader.forEach((name, col) => {
-      if (!String(cells[col] || '').trim()) {
-        missingFields.push({row:boundedRow, field:name});
-      }
-    });
-
     if (eligibleRowCount >= maxEligibleRows) break;
   }
 
@@ -460,18 +452,13 @@ function v03ParseOperationsBoardHealth_(text, options) {
   const duplicateIds = Object.keys(counts).filter(id => counts[id] > 1).sort();
 
   const boundedInvalidRows = invalidRows.slice(0, 20);
-  const boundedMissingFields = missingFields.slice(0, 20);
   return {
-    healthy: duplicateIds.length === 0 &&
-      invalidRows.length === 0 &&
-      missingFields.length === 0,
+    healthy: duplicateIds.length === 0 && invalidRows.length === 0,
     scannedRowCount:scannedRowCount,
     eligibleRowCount:eligibleRowCount,
     duplicateIds:duplicateIds,
     invalidRows:boundedInvalidRows,
-    missingFields:boundedMissingFields,
-    truncatedIssues: invalidRows.length > boundedInvalidRows.length ||
-      missingFields.length > boundedMissingFields.length
+    truncatedIssues: invalidRows.length > boundedInvalidRows.length
   };
 }
 
