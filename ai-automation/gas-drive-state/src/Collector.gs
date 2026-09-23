@@ -18,7 +18,8 @@ const COLLECTOR_V03 = Object.freeze({
   OPERATIONS_BOARD_SELECTOR: 'OPERATIONS_BOARD_STRUCTURAL_HEALTH_V1',
   OPERATIONS_BOARD_FILE_ID: '1NrhZCPLXOK4TKZqKBg3YEmYl1D7Qtgfx',
   OPERATIONS_BOARD_MAX_BYTES: 262144,
-  OPERATIONS_BOARD_MAX_ROWS: 200
+  OPERATIONS_BOARD_MAX_ROWS: 200,
+  OPERATIONS_BOARD_MAX_ELIGIBLE_ROWS: 20
 });
 
 function requireDevRuntimeForTestMutation_() {
@@ -315,7 +316,8 @@ function v03CollectOperationsBoardHealth_(tx, s) {
 
   const text = blob.getDataAsString('UTF-8');
   const parsed = v03ParseOperationsBoardHealth_(text, {
-    maxRows: COLLECTOR_V03.OPERATIONS_BOARD_MAX_ROWS
+    maxRows: COLLECTOR_V03.OPERATIONS_BOARD_MAX_ROWS,
+    maxEligibleRows: COLLECTOR_V03.OPERATIONS_BOARD_MAX_ELIGIBLE_ROWS
   });
   const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text)
     .map(b => ('0'+((b<0?b+256:b).toString(16))).slice(-2)).join('');
@@ -330,7 +332,8 @@ function v03CollectOperationsBoardHealth_(tx, s) {
   const signal = parsed.healthy ? (changed ? 'CHANGED' : 'NONE') : 'HEALTH_FAIL';
   const detail = JSON.stringify({
     contract:'OPERATIONS_BOARD_STRUCTURAL_HEALTH_V1',
-    rows:parsed.rowCount,
+    scanned_rows:parsed.scannedRowCount,
+    eligible_rows:parsed.eligibleRowCount,
     duplicate_ids:parsed.duplicateIds,
     invalid_rows:parsed.invalidRows,
     missing_fields:parsed.missingFields
@@ -368,12 +371,17 @@ function v03CollectOperationsBoardHealth_(tx, s) {
 function v03ParseOperationsBoardHealth_(text, options) {
   const opts = options || {};
   const maxRows = Number(opts.maxRows || COLLECTOR_V03.OPERATIONS_BOARD_MAX_ROWS);
-  if (!Number.isFinite(maxRows) || maxRows <= 0) {
-    throw v03Error_('MALFORMED_CONFIG', 'invalid OPERATIONS-BOARD row bound');
+  const maxEligibleRows = Number(
+    opts.maxEligibleRows || COLLECTOR_V03.OPERATIONS_BOARD_MAX_ELIGIBLE_ROWS
+  );
+  if (!Number.isFinite(maxRows) || maxRows <= 0 ||
+      !Number.isFinite(maxEligibleRows) || maxEligibleRows <= 0) {
+    throw v03Error_('MALFORMED_CONFIG', 'invalid OPERATIONS-BOARD bounds');
   }
 
   const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
   const expectedHeader = ['ID','優先','状態','実行','タスク'];
+  const eligibleStates = new Set(['READY','ACTIVE','WATCH','HUMAN_WAIT']);
   const headerIndexes = [];
   lines.forEach((line, index) => {
     const cells = v03ParseMarkdownRow_(line);
@@ -400,38 +408,51 @@ function v03ParseOperationsBoardHealth_(text, options) {
   const ids = [];
   const invalidRows = [];
   const missingFields = [];
-  let rowCount = 0;
+  let scannedRowCount = 0;
+  let eligibleRowCount = 0;
 
   for (let i = headerIndex + 2; i < lines.length; i++) {
     const raw = lines[i];
     if (!/^\s*\|/.test(raw)) break;
+    scannedRowCount++;
+    if (scannedRowCount > maxRows) {
+      throw v03Error_('BOARD_ROW_LIMIT', 'OPERATIONS-BOARD task table scan bound exceeded');
+    }
+
     const cells = v03ParseMarkdownRow_(raw);
-    rowCount++;
-    if (rowCount > maxRows) {
-      throw v03Error_('BOARD_ROW_LIMIT', 'OPERATIONS-BOARD task table row bound exceeded');
-    }
-
     if (!cells || cells.length !== expectedHeader.length) {
-      invalidRows.push({row:rowCount, reason:'COLUMN_COUNT'});
-      continue;
+      throw v03Error_(
+        'BOARD_ROW_MALFORMED',
+        'cannot determine bounded task subset because row has unexpected column count'
+      );
     }
 
+    const state = String(cells[2] || '').trim();
+    if (!eligibleStates.has(state)) continue;
+
+    eligibleRowCount++;
+    const boundedRow = eligibleRowCount;
     const id = String(cells[0] || '').trim();
     if (!/^O-\d{3}$/.test(id)) {
-      invalidRows.push({row:rowCount, reason:id ? 'INVALID_ID' : 'MISSING_ID'});
+      invalidRows.push({row:boundedRow, reason:id ? 'INVALID_ID' : 'MISSING_ID'});
     } else {
       ids.push(id);
     }
 
     expectedHeader.forEach((name, col) => {
       if (!String(cells[col] || '').trim()) {
-        missingFields.push({row:rowCount, field:name});
+        missingFields.push({row:boundedRow, field:name});
       }
     });
+
+    if (eligibleRowCount >= maxEligibleRows) break;
   }
 
-  if (rowCount === 0) {
-    throw v03Error_('BOARD_TABLE_EMPTY', 'OPERATIONS-BOARD task table has no task rows');
+  if (eligibleRowCount === 0) {
+    throw v03Error_(
+      'BOARD_BOUNDED_SUBSET_EMPTY',
+      'no READY/ACTIVE/WATCH/HUMAN_WAIT task rows found in bounded Board scan'
+    );
   }
 
   const counts = {};
@@ -444,7 +465,8 @@ function v03ParseOperationsBoardHealth_(text, options) {
     healthy: duplicateIds.length === 0 &&
       invalidRows.length === 0 &&
       missingFields.length === 0,
-    rowCount:rowCount,
+    scannedRowCount:scannedRowCount,
+    eligibleRowCount:eligibleRowCount,
     duplicateIds:duplicateIds,
     invalidRows:boundedInvalidRows,
     missingFields:boundedMissingFields,
