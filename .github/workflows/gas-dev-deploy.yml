@@ -9,6 +9,7 @@ on:
       - "ai-automation/gas-drive-state/scripts/**"
       - "ai-automation/gas-drive-state/package.json"
       - "ai-automation/gas-drive-state/package-lock.json"
+      - "ai-automation/gas-drive-state/.claspignore"
       - ".github/workflows/gas-dev-deploy.yml"
   workflow_dispatch:
 
