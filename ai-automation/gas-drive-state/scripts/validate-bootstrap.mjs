@@ -47,6 +47,7 @@ const directoryContract = fs.readFileSync(`${root}/src/DirectoryContract.gs`, 'u
 const devCommandRunner = fs.readFileSync(`${root}/src/DevCommandRunner.gs`, 'utf8');
 const mechanicalVersion = JSON.parse(fs.readFileSync(`${root}/version.json`, 'utf8'));
 const deployValidator = fs.readFileSync(`${root}/scripts/validate-deploy-target.mjs`, 'utf8');
+const sourceComparator = fs.readFileSync(`${root}/scripts/compare-gas-source.mjs`, 'utf8');
 
 for (const [name, source] of [
   ['Smoke.gs', smoke],
@@ -293,6 +294,7 @@ if (!devWorkflow.includes('paths:')) throw new Error('automatic Dev deploy path 
 if (!devWorkflow.includes('ai-automation/gas-drive-state/src/**')) throw new Error('automatic Dev deploy source path filter missing');
 if (!devWorkflow.includes('ai-automation/gas-drive-state/.claspignore')) throw new Error('automatic Dev deploy claspignore path filter missing');
 if (!deployValidator.includes("path.resolve(root, 'DevCommandRunner.gs')")) throw new Error('Dev command runner missing from exact deploy allowlist');
+if (!sourceComparator.includes("'DevCommandRunner'")) throw new Error('Dev command runner missing from exact readback compare set');
 if (!devWorkflow.includes('workflow_dispatch:')) throw new Error('manual Dev deploy recovery path missing');
 if (!devWorkflow.includes('environment: development')) throw new Error('development Environment boundary missing');
 if (!devWorkflow.includes('CLASPRC_JSON_DEV')) throw new Error('Dev-specific credential secret missing');
