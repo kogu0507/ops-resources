@@ -16,6 +16,7 @@ const DEV_COMMAND_RUNNER = Object.freeze({
   sheetName: 'COMMANDS',
   handler: 'runDevCommandQueueTick',
   cadenceMinutes: 5,
+  staleClaimMinutes: 30,
   header: Object.freeze([
     'command_id',
     'action',
@@ -136,6 +137,48 @@ function runDevCommandQueueTick() {
     }
 
     const values = sheet.getRange(2, 1, lastRow - 1, DEV_COMMAND_RUNNER.header.length).getValues();
+
+    const duplicateIds = devCommandFindDuplicateIds_(values);
+    if (duplicateIds.length) {
+      const blocked = {
+        status: 'BLOCKED',
+        reason: 'DUPLICATE_COMMAND_ID',
+        duplicate_command_ids: duplicateIds
+      };
+      console.error(JSON.stringify(blocked));
+      return blocked;
+    }
+
+    const claimCheck = devCommandInspectClaims_(values, new Date(), DEV_COMMAND_RUNNER.staleClaimMinutes);
+    if (claimCheck.stale) {
+      const rowNumber = claimCheck.rowIndex + 2;
+      const finishedAt = new Date().toISOString();
+      const failure = {
+        ok: false,
+        error: 'STALE_CLAIM_UNKNOWN_OUTCOME',
+        claimed_at: claimCheck.claimedAt || '',
+        stale_after_minutes: DEV_COMMAND_RUNNER.staleClaimMinutes,
+        retry: 'FORBIDDEN_AUTOMATICALLY'
+      };
+      sheet.getRange(rowNumber, 4).setValue('FAILED');
+      sheet.getRange(rowNumber, 6, 1, 2)
+        .setValues([[finishedAt, JSON.stringify(failure)]]);
+      SpreadsheetApp.flush();
+
+      const failed = {
+        status: 'FAILED_STALE_CLAIM',
+        command_id: String(values[claimCheck.rowIndex][0] || '').trim(),
+        reason: 'STALE_CLAIM_UNKNOWN_OUTCOME'
+      };
+      console.error(JSON.stringify(failed));
+      return failed;
+    }
+    if (claimCheck.inFlight) {
+      const idle = {status: 'NO_ACTION', reason: 'IN_FLIGHT_CLAIM'};
+      console.log(JSON.stringify(idle));
+      return idle;
+    }
+
     let selected = null;
 
     for (let i = 0; i < values.length; i++) {
@@ -224,4 +267,30 @@ function devCommandAssertHeader_(sheet) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error('DEV_COMMAND_HEADER_MISMATCH');
   }
+}
+
+
+function devCommandFindDuplicateIds_(rows) {
+  const counts = {};
+  rows.forEach(row => {
+    const id = String(row[0] || '').trim();
+    if (!id) return;
+    counts[id] = (counts[id] || 0) + 1;
+  });
+  return Object.keys(counts).filter(id => counts[id] > 1).sort();
+}
+
+function devCommandInspectClaims_(rows, now, staleMinutes) {
+  const nowMs = now.getTime();
+  const thresholdMs = Number(staleMinutes) * 60000;
+  for (let i = 0; i < rows.length; i++) {
+    if (String(rows[i][3] || '').trim() !== 'CLAIMED') continue;
+    const claimedAt = String(rows[i][4] || '').trim();
+    const claimedMs = claimedAt ? new Date(claimedAt).getTime() : NaN;
+    if (!Number.isFinite(claimedMs) || (nowMs - claimedMs) >= thresholdMs) {
+      return {stale: true, inFlight: false, rowIndex: i, claimedAt: claimedAt};
+    }
+    return {stale: false, inFlight: true, rowIndex: i, claimedAt: claimedAt};
+  }
+  return {stale: false, inFlight: false, rowIndex: -1, claimedAt: ''};
 }
