@@ -16,6 +16,7 @@ const canonicalNames = [
   'CollectorAcceptance',
   'DriveMutation',
   'DirectoryContract',
+  'DevCommandRunner',
   'LockProbe',
   'MechanicalHealth',
   'Smoke',
