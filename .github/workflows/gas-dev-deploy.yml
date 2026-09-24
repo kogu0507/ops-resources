@@ -1,6 +1,15 @@
 name: GAS Dev Deploy
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "ai-automation/gas-drive-state/src/**"
+      - "ai-automation/gas-drive-state/scripts/**"
+      - "ai-automation/gas-drive-state/package.json"
+      - "ai-automation/gas-drive-state/package-lock.json"
+      - ".github/workflows/gas-dev-deploy.yml"
   workflow_dispatch:
 
 permissions:
