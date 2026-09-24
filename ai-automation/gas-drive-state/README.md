@@ -7,7 +7,7 @@ Google Drive is the project authority. This repository is the technical source/d
 **Operational baseline: Dev verified; Production source materialized and first manual Production collection verified; recurring trigger not yet enabled.**
 
 Verified Dev path:
-- GitHub main -> manual GitHub Actions -> clasp -> exact Dev Apps Script target
+- GitHub main -> path-filtered GitHub Actions -> clasp -> exact Dev Apps Script target
 - bounded collector v0.3
 - SOURCES -> DRIVE_STATE -> COLLECTION_RUNS
 - run-level Sheets batchUpdate commit
@@ -65,7 +65,7 @@ GitHub Environment `development` supplies:
 
 Deployment fails closed if the clasp mapping target differs from the independently configured expected script ID.
 
-Dev deploy remains manual via `workflow_dispatch`.
+Relevant reviewed changes on `main` trigger Dev deploy automatically. `workflow_dispatch` remains available only as a manual recovery/re-run path.
 
 ## Production freeze
 

@@ -235,6 +235,13 @@ if (fs.existsSync(`${root}/appsscript.json`)) throw new Error('manifest must exi
 if (fs.existsSync('.github/workflows/gas-prod-deploy.yml')) throw new Error('production deploy workflow must remain disabled during bootstrap');
 
 const devWorkflow = fs.readFileSync('.github/workflows/gas-dev-deploy.yml','utf8');
+if (!devWorkflow.includes('push:')) throw new Error('automatic Dev deploy push trigger missing');
+if (!devWorkflow.includes('branches:')) throw new Error('automatic Dev deploy main branch filter missing');
+if (!devWorkflow.includes('- main')) throw new Error('automatic Dev deploy must remain pinned to main');
+if (!devWorkflow.includes('paths:')) throw new Error('automatic Dev deploy path filter missing');
+if (!devWorkflow.includes('ai-automation/gas-drive-state/src/**')) throw new Error('automatic Dev deploy source path filter missing');
+if (!devWorkflow.includes('ai-automation/gas-drive-state/.claspignore')) throw new Error('automatic Dev deploy claspignore path filter missing');
+if (!devWorkflow.includes('workflow_dispatch:')) throw new Error('manual Dev deploy recovery path missing');
 if (!devWorkflow.includes('environment: development')) throw new Error('development Environment boundary missing');
 if (!devWorkflow.includes('CLASPRC_JSON_DEV')) throw new Error('Dev-specific credential secret missing');
 if (!devWorkflow.includes('EXPECTED_DEV_SCRIPT_ID')) throw new Error('independent Dev target variable missing');
