@@ -46,6 +46,7 @@ const driveMutation = fs.readFileSync(`${root}/src/DriveMutation.gs`, 'utf8');
 const directoryContract = fs.readFileSync(`${root}/src/DirectoryContract.gs`, 'utf8');
 const devCommandRunner = fs.readFileSync(`${root}/src/DevCommandRunner.gs`, 'utf8');
 const mechanicalVersion = JSON.parse(fs.readFileSync(`${root}/version.json`, 'utf8'));
+const deployValidator = fs.readFileSync(`${root}/scripts/validate-deploy-target.mjs`, 'utf8');
 
 for (const [name, source] of [
   ['Smoke.gs', smoke],
