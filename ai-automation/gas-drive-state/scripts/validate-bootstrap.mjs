@@ -15,6 +15,7 @@ const required = [
   `${root}/src/TriggerPreflight.gs`,
   `${root}/src/DriveMutation.gs`,
   `${root}/src/DirectoryContract.gs`,
+  `${root}/src/DevCommandRunner.gs`,
   `${root}/version.json`,
   `${root}/scripts/validate-deploy-target.mjs`,
   `${root}/scripts/prepare-drift-project.mjs`,
@@ -43,6 +44,7 @@ const mechanicalHealth = fs.readFileSync(`${root}/src/MechanicalHealth.gs`, 'utf
 const triggerPreflight = fs.readFileSync(`${root}/src/TriggerPreflight.gs`, 'utf8');
 const driveMutation = fs.readFileSync(`${root}/src/DriveMutation.gs`, 'utf8');
 const directoryContract = fs.readFileSync(`${root}/src/DirectoryContract.gs`, 'utf8');
+const devCommandRunner = fs.readFileSync(`${root}/src/DevCommandRunner.gs`, 'utf8');
 const mechanicalVersion = JSON.parse(fs.readFileSync(`${root}/version.json`, 'utf8'));
 
 for (const [name, source] of [
@@ -54,7 +56,8 @@ for (const [name, source] of [
   ['MechanicalHealth.gs', mechanicalHealth],
   ['TriggerPreflight.gs', triggerPreflight],
   ['DriveMutation.gs', driveMutation],
-  ['DirectoryContract.gs', directoryContract]
+  ['DirectoryContract.gs', directoryContract],
+  ['DevCommandRunner.gs', devCommandRunner]
 ]) {
   new vm.Script(source, {filename:name});
 }
@@ -172,6 +175,53 @@ if (/Drive\.Files\.(create|copy|update|delete|remove)/.test(triggerPreflight)) t
 if (!directoryContract.includes('runDirectoryContractFixtureAcceptance')) throw new Error('directory contract fixture acceptance missing');
 if (!directoryContract.includes('runDirectoryContractDevProbe')) throw new Error('directory contract Dev probe missing');
 if (!directoryContract.includes("mode:'DETECT_ONLY'")) throw new Error('directory contract PoC must remain DETECT_ONLY');
+
+if (!devCommandRunner.includes('1ugAXhNMvEcZ89V0QCb3iEfxevxwUMmZhzF3WKN2CPmY')) throw new Error('Dev command runner exact Sheet ID missing');
+if (!devCommandRunner.includes("sheetName: 'COMMANDS'")) throw new Error('Dev command runner exact sheet name missing');
+if (!devCommandRunner.includes("handler: 'runDevCommandQueueTick'")) throw new Error('Dev command runner handler binding missing');
+if (!devCommandRunner.includes('cadenceMinutes: 5')) throw new Error('Dev command runner cadence contract missing');
+if (!devCommandRunner.includes('staleClaimMinutes: 30')) throw new Error('Dev command runner stale-claim bound missing');
+for (const entrypoint of ['getDevCommandRunnerPreflight','installDevCommandRunnerTrigger','removeDevCommandRunnerTrigger','runDevCommandQueueTick']) {
+  const marker = `function ${entrypoint}()`;
+  const start = devCommandRunner.indexOf(marker);
+  if (start < 0) throw new Error(`Dev command runner entrypoint missing: ${entrypoint}`);
+  const body = devCommandRunner.slice(start, start + 500);
+  if (!body.includes('requireDevRuntimeForTestMutation_();')) throw new Error(`Dev runtime guard missing at entrypoint: ${entrypoint}`);
+}
+for (const action of ['CI_CD_SMOKE','COLLECTOR_V03_ACCEPTANCE','OPERATIONS_BOARD_HEALTH_READ_ACCEPTANCE','OPERATIONS_BOARD_UNCHANGED_DEDUP_ACCEPTANCE']) {
+  if (!devCommandRunner.includes(`case '${action}'`)) throw new Error(`Dev command allowlist action missing: ${action}`);
+}
+if (!devCommandRunner.includes("throw new Error('DEV_COMMAND_ACTION_NOT_ALLOWED: ' + action)")) throw new Error('Dev command allowlist default deny missing');
+if (!devCommandRunner.includes("reason: 'DUPLICATE_COMMAND_ID'")) throw new Error('Dev command duplicate-ID fail-close missing');
+if (!devCommandRunner.includes("error: 'STALE_CLAIM_UNKNOWN_OUTCOME'")) throw new Error('Dev command stale-claim terminal evidence missing');
+if (!devCommandRunner.includes("retry: 'FORBIDDEN_AUTOMATICALLY'")) throw new Error('Dev command stale-claim blind-retry prohibition missing');
+if (!devCommandRunner.includes("reason: 'IN_FLIGHT_CLAIM'")) throw new Error('Dev command in-flight claim gate missing');
+if (!devCommandRunner.includes("if (!lock.tryLock(1000))")) throw new Error('Dev command overlap lock missing');
+if (!devCommandRunner.includes("if (String(row[3] || '').trim() === 'READY')")) throw new Error('Dev command READY selector missing');
+if (/runBoundedProductionCollectorV03|runScheduledProductionCollectorV03|installProductionCollectorHourlyTrigger/.test(devCommandRunner)) throw new Error('Dev command runner must not expose Production action');
+
+{
+  const context = {console};
+  vm.createContext(context);
+  new vm.Script(devCommandRunner, {filename:'DevCommandRunner.gs'}).runInContext(context);
+  const findDuplicates = context.devCommandFindDuplicateIds_;
+  const inspectClaims = context.devCommandInspectClaims_;
+  if (typeof findDuplicates !== 'function' || typeof inspectClaims !== 'function') {
+    throw new Error('Dev command pure validation helpers not callable');
+  }
+  const dupRows = [
+    ['CMD-1','CI_CD_SMOKE','','READY'],
+    ['CMD-1','CI_CD_SMOKE','','DONE']
+  ];
+  if (JSON.stringify(findDuplicates(dupRows)) !== JSON.stringify(['CMD-1'])) throw new Error('Dev command duplicate-ID fixture failed');
+  if (findDuplicates([['CMD-1'],['CMD-2']]).length !== 0) throw new Error('Dev command unique-ID fixture failed');
+  const now = new Date('2026-09-24T00:30:00Z');
+  const stale = inspectClaims([['CMD-1','','','CLAIMED','2026-09-23T23:00:00Z']], now, 30);
+  if (!stale.stale || stale.inFlight) throw new Error('Dev command stale-claim fixture failed');
+  const active = inspectClaims([['CMD-1','','','CLAIMED','2026-09-24T00:20:00Z']], now, 30);
+  if (active.stale || !active.inFlight) throw new Error('Dev command in-flight claim fixture failed');
+}
+
 if (!directoryContract.includes('requireDevRuntimeForTestMutation_();')) throw new Error('directory contract probe must remain Dev-guarded');
 if (/Drive\\.Files\\.(create|copy|update|delete|remove)|DriveApp\\.(create|move|setTrashed)/.test(directoryContract)) throw new Error('directory contract PoC must remain Drive-read-only');
 
