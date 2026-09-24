@@ -51,7 +51,8 @@ Historical frozen Production observation spreadsheet:
 - `src/Acceptance.gs` / `src/Smoke.gs` — bootstrap/contract verification helpers
 - `src/appsscript.json` — Apps Script manifest
 - `scripts/validate-deploy-target.mjs` — exact target/rootDir/push allowlist guard
-- `.github/workflows/gas-dev-deploy.yml` — manual Dev deploy
+- `src/DevCommandRunner.gs` — Dev-only bounded command queue runner for reviewed acceptance actions
+- `.github/workflows/gas-dev-deploy.yml` — automatic path-filtered Dev deploy; manual dispatch retained for recovery
 - `.github/workflows/gas-prod-deploy.yml.disabled` — inert historical Production template; not approved for activation
 
 The source tree is intentionally not reorganized further during closeout. The verified Dev build is more valuable than cosmetic restructuring.
@@ -66,6 +67,46 @@ GitHub Environment `development` supplies:
 Deployment fails closed if the clasp mapping target differs from the independently configured expected script ID.
 
 Relevant reviewed changes on `main` trigger Dev deploy automatically. `workflow_dispatch` remains available only as a manual recovery/re-run path.
+
+## Dev command runner contract
+
+Purpose:
+- replace recurring Apps Script editor function-selection/Run operations with a bounded Dev-only command queue.
+- command Sheet: `DEV｜GAS Mechanical Command Queue`, exact spreadsheet ID `1ugAXhNMvEcZ89V0QCb3iEfxevxwUMmZhzF3WKN2CPmY`, tab `COMMANDS`.
+- GitHub-reviewed source owns executable meaning. Sheet rows may request only actions present in the hard-coded source allowlist; Sheet content cannot name arbitrary GAS functions.
+
+Queue states:
+- `READY` — eligible to be claimed.
+- `CLAIMED` — one runner tick has durably claimed the row.
+- `DONE` — reviewed allowlisted action returned and the result was durably recorded.
+- `FAILED` — action failed, or a stale/ambiguous claim was terminalized fail-closed.
+- a `CLAIMED` row older than 30 minutes, or with an invalid claim timestamp, becomes `FAILED` with `STALE_CLAIM_UNKNOWN_OUTCOME`. It is never automatically retried because action idempotency is not assumed.
+
+Identity / concurrency:
+- `command_id` is globally unique within the command Sheet. Any duplicate command ID blocks runner execution rather than choosing a row.
+- ScriptLock prevents overlapping ticks from executing concurrently.
+- at most one READY command is executed per tick.
+- while a non-stale CLAIMED row exists, a later tick performs no new command work.
+- the 5-minute trigger therefore has an ideal upper bound of about 12 command executions/hour; this is a latency/automation convenience, not a throughput service.
+
+Initial allowlist:
+- `CI_CD_SMOKE`
+- `COLLECTOR_V03_ACCEPTANCE`
+- `OPERATIONS_BOARD_HEALTH_READ_ACCEPTANCE`
+- `OPERATIONS_BOARD_UNCHANGED_DEDUP_ACCEPTANCE`
+
+Safety / activation:
+- every public runner/preflight/install/remove entrypoint is exact-Dev guarded with `requireDevRuntimeForTestMutation_()`.
+- Production collector or Production trigger actions are not exposed through the command runner.
+- no new OAuth scope/account/credential is introduced by the runner.
+- source deployment alone does not install a runner trigger.
+- activation is a separate bounded Dev step: fresh preflight -> install exactly one `runDevCommandQueueTick` time-driven trigger -> verify exact trigger identity -> submit one smoke command -> read back terminal queue result.
+- unexpected project-trigger topology blocks install.
+- rollback/removal uses `removeDevCommandRunnerTrigger()`, which requires exactly one matching project trigger and verifies deletion.
+
+Operational authority:
+- the command Sheet is an execution-request/result surface only. It does not become a project roadmap, semantic authority, Production authorization surface, or a mechanism for expanding the allowlist.
+- new actions require reviewed source change + machine validation before they can be requested from the Sheet.
 
 ## Production freeze
 
