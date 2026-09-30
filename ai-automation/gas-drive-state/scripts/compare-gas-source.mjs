@@ -19,6 +19,7 @@ const canonicalNames = [
   'DevCommandRunner',
   'LockProbe',
   'MechanicalHealth',
+  'RuntimeHealth',
   'Smoke',
   'TriggerPreflight'
 ];
