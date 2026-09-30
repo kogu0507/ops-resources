@@ -6,7 +6,7 @@
  * in one Google Sheets spreadsheets.batchUpdate request.
  */
 const COLLECTOR_V03 = Object.freeze({
-  VERSION: 'collector-v0.7.0-dev-runtime-health',
+  VERSION: 'collector-v0.7.1-dev-runtime-health-review-fixes',
   DEV_SCRIPT_ID: '1Txo4FJmWuJtq76e2v3nLrcw2fv1MlMTHJZnFj_lSvhE_7AZVr4UjC2zs',
   PROD_SCRIPT_ID: '1r3y9O0_Du-QAoxKiJRP5nCSnLzrMo5IFTV3m1ex2KsvQCFNR5d0qoLBL',
   TEST_SPREADSHEET_ID: '1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0',
@@ -682,11 +682,27 @@ function v03RecordSourceFailure_(tx, s, e) {
   if (targets.length) {
     targets.forEach(row => v03PatchExisting_(tx, row, patch));
   } else {
-    const identity = v03BaseIdentity_(s, String(s.source_kind||'UNKNOWN'),
-      String(s.source_ref||''), String(s.source_ref||''));
-    v03UpsertState_(tx, identity, patch);
+    v03UpsertState_(tx, v03FailureIdentity_(s), patch);
   }
   return {ok:false, source_key:String(s.source_key||'UNKNOWN'), code:code};
+}
+
+function v03FailureIdentity_(s) {
+  if (String(s.collection_mode || '') === 'STRUCTURAL_HEALTH' &&
+      String(s.selector || '').trim()) {
+    return v03BaseIdentity_(
+      s,
+      'RUNTIME_HEALTH',
+      String(s.selector).trim(),
+      String(s.source_ref || '')
+    );
+  }
+  return v03BaseIdentity_(
+    s,
+    String(s.source_kind || 'UNKNOWN'),
+    String(s.source_ref || ''),
+    String(s.source_ref || '')
+  );
 }
 
 function v03FailureTargets_(tx, s) {
