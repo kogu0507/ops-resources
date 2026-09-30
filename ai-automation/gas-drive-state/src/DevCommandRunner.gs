@@ -246,6 +246,10 @@ function devCommandExecuteAllowed_(action) {
       return runOperationsBoardHealthDevReadAcceptance();
     case 'OPERATIONS_BOARD_UNCHANGED_DEDUP_ACCEPTANCE':
       return runOperationsBoardUnchangedHealthDedupAcceptance();
+    case 'RUNTIME_HEALTH_FIXTURE_ACCEPTANCE':
+      return runRuntimeHealthFixtureAcceptance();
+    case 'RUNTIME_HEALTH_DEV_READ_ACCEPTANCE':
+      return runRuntimeHealthDevReadAcceptance();
     default:
       throw new Error('DEV_COMMAND_ACTION_NOT_ALLOWED: ' + action);
   }
