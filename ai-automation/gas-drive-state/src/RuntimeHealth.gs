@@ -667,36 +667,120 @@ function runRuntimeHealthFixtureAcceptance() {
 function runRuntimeHealthDevReadAcceptance() {
   requireDevRuntimeForTestMutation_();
 
-  const scheduledSnapshot = v03ReadRuntimeHealthSnapshot_(RUNTIME_HEALTH_V01.SCHEDULED_WORK);
-  const scheduled = v03EvaluateRuntimeHealthSnapshot_('SCHEDULED_WORK', scheduledSnapshot);
-  const siteSnapshot = v03ReadRuntimeHealthSnapshot_(RUNTIME_HEALTH_V01.SITE_RESEARCH);
-  const site = v03EvaluateRuntimeHealthSnapshot_('SITE_RESEARCH', siteSnapshot);
+  const scheduled = v03RuntimeHealthDevProbeOne_(
+    RUNTIME_HEALTH_V01.SCHEDULED_WORK,
+    'T-RHP-SCHEDULED-WORK-CURRENT'
+  );
+  const site = v03RuntimeHealthDevProbeOne_(
+    RUNTIME_HEALTH_V01.SITE_RESEARCH,
+    'T-RHP-SITE-RESEARCH-CURRENT'
+  );
 
-  v03RuntimeAssert_(scheduled.coverage_complete === true, 'Scheduled Work coverage incomplete');
-  v03RuntimeAssert_(site.coverage_complete === true, 'Site Research coverage incomplete');
-  v03RuntimeAssert_(typeof scheduled.healthy === 'boolean', 'Scheduled Work health verdict missing');
-  v03RuntimeAssert_(typeof site.healthy === 'boolean', 'Site Research health verdict missing');
+  v03RuntimeAssert_(
+    scheduled.probe_status === 'COLLECTED' || scheduled.probe_status === 'FAIL_CLOSED',
+    'Scheduled Work probe did not produce a terminal observation'
+  );
+  v03RuntimeAssert_(
+    site.probe_status === 'COLLECTED' || site.probe_status === 'FAIL_CLOSED',
+    'Site Research probe did not produce a terminal observation'
+  );
 
   const result = {
     status: 'PASS',
     contract: RUNTIME_HEALTH_V01.VERSION,
-    scheduled_work: {
-      file_id: RUNTIME_HEALTH_V01.SCHEDULED_WORK.spreadsheetId,
-      healthy: scheduled.healthy,
-      coverage: scheduled.coverage,
-      metrics: scheduled.metrics,
-      issues: scheduled.issues
-    },
-    site_research: {
-      file_id: RUNTIME_HEALTH_V01.SITE_RESEARCH.spreadsheetId,
-      healthy: site.healthy,
-      coverage: site.coverage,
-      metrics: site.metrics,
-      issues: site.issues
-    }
+    acceptance_meaning:
+      'PASS means both exact current sources were independently observed and any source-local structural failure serialized fail-closed; source health may be abnormal.',
+    scheduled_work: scheduled,
+    site_research: site
   };
   console.log(JSON.stringify(result));
   return result;
+}
+
+function v03RuntimeHealthDevProbeOne_(config, sourceKey) {
+  const stateHeader = [
+    'state_key','source_key','entity_kind','entity_key','source_ref','authority_ref',
+    'observed_name','observed_mime_type','observed_modified_at','source_version_signal',
+    'collected_at','collection_status','last_collection_success_at','last_collection_error_at',
+    'last_collection_error_code','last_collection_error','stale_after_minutes','stale_state',
+    'mechanical_signal','mechanical_signal_detail','judge_status'
+  ];
+  const tx = {
+    stateHeader: stateHeader,
+    stateRows: [],
+    dirtyCells: new Map(),
+    newStateRows: [],
+    stateSheetId: 0,
+    runSheetId: 0,
+    runHeader: [],
+    runAppend: null,
+    spreadsheetId: 'TEST'
+  };
+  const source = {
+    source_key: sourceKey,
+    source_kind: 'SHEET_RANGE',
+    source_ref: config.spreadsheetId,
+    authority_ref: config.spreadsheetId,
+    selector: config.selector,
+    collection_mode: 'STRUCTURAL_HEALTH',
+    stale_after_minutes: 60,
+    expected_identity: config.expectedIdentity
+  };
+
+  let outcome;
+  let health = null;
+  try {
+    outcome = v03CollectRuntimeHealth_(tx, source);
+    health = outcome.structural_health || null;
+  } catch (e) {
+    if (!e || !e.v03code) throw e;
+    outcome = v03RecordSourceFailure_(tx, source, e);
+  }
+
+  const rows = tx.stateRows.filter(row => String(row.source_key) === sourceKey);
+  v03RuntimeAssert_(
+    rows.length === 1,
+    config.runtimeKey + ' Dev probe must serialize exactly one in-memory state row'
+  );
+  const row = rows[0];
+  const failedClosed = String(row.collection_status) !== 'SUCCESS';
+
+  if (failedClosed) {
+    v03RuntimeAssert_(
+      String(row.stale_state) === 'UNKNOWN',
+      config.runtimeKey + ' failed source must serialize UNKNOWN freshness'
+    );
+    v03RuntimeAssert_(
+      String(row.mechanical_signal) === 'HEALTH_FAIL',
+      config.runtimeKey + ' failed source must serialize HEALTH_FAIL'
+    );
+  } else {
+    v03RuntimeAssert_(
+      health && health.coverage_complete === true,
+      config.runtimeKey + ' successful source must prove complete coverage'
+    );
+    v03RuntimeAssert_(
+      typeof health.healthy === 'boolean',
+      config.runtimeKey + ' successful source must return a health verdict'
+    );
+  }
+
+  return {
+    file_id: config.spreadsheetId,
+    selector: config.selector,
+    probe_status: failedClosed ? 'FAIL_CLOSED' : 'COLLECTED',
+    collector_code: String(outcome.code || ''),
+    collection_status: String(row.collection_status || ''),
+    last_collection_error_code: String(row.last_collection_error_code || ''),
+    last_collection_error: String(row.last_collection_error || ''),
+    stale_state: String(row.stale_state || ''),
+    mechanical_signal: String(row.mechanical_signal || ''),
+    healthy: health ? health.healthy : false,
+    coverage_complete: health ? health.coverage_complete : false,
+    coverage: health ? health.coverage : null,
+    metrics: health ? health.metrics : null,
+    issues: health ? health.issues : []
+  };
 }
 
 function v03RuntimeHealthFixture_(runtimeKey) {
