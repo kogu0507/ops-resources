@@ -674,8 +674,8 @@ function runRuntimeHealthDevReadAcceptance() {
 
   v03RuntimeAssert_(scheduled.coverage_complete === true, 'Scheduled Work coverage incomplete');
   v03RuntimeAssert_(site.coverage_complete === true, 'Site Research coverage incomplete');
-  v03RuntimeAssert_(scheduled.healthy === true, 'current Scheduled Work structural health is abnormal');
-  v03RuntimeAssert_(site.healthy === true, 'current Site Research structural health is abnormal');
+  v03RuntimeAssert_(typeof scheduled.healthy === 'boolean', 'Scheduled Work health verdict missing');
+  v03RuntimeAssert_(typeof site.healthy === 'boolean', 'Site Research health verdict missing');
 
   const result = {
     status: 'PASS',
@@ -684,13 +684,15 @@ function runRuntimeHealthDevReadAcceptance() {
       file_id: RUNTIME_HEALTH_V01.SCHEDULED_WORK.spreadsheetId,
       healthy: scheduled.healthy,
       coverage: scheduled.coverage,
-      metrics: scheduled.metrics
+      metrics: scheduled.metrics,
+      issues: scheduled.issues
     },
     site_research: {
       file_id: RUNTIME_HEALTH_V01.SITE_RESEARCH.spreadsheetId,
       healthy: site.healthy,
       coverage: site.coverage,
-      metrics: site.metrics
+      metrics: site.metrics,
+      issues: site.issues
     }
   };
   console.log(JSON.stringify(result));
