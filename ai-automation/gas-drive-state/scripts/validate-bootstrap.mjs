@@ -12,6 +12,7 @@ const required = [
   `${root}/src/CollectorAcceptance.gs`,
   `${root}/src/LockProbe.gs`,
   `${root}/src/MechanicalHealth.gs`,
+  `${root}/src/RuntimeHealth.gs`,
   `${root}/src/TriggerPreflight.gs`,
   `${root}/src/DriveMutation.gs`,
   `${root}/src/DirectoryContract.gs`,
@@ -41,6 +42,7 @@ const collector = fs.readFileSync(`${root}/src/Collector.gs`, 'utf8');
 const collectorAcceptance = fs.readFileSync(`${root}/src/CollectorAcceptance.gs`, 'utf8');
 const lockProbe = fs.readFileSync(`${root}/src/LockProbe.gs`, 'utf8');
 const mechanicalHealth = fs.readFileSync(`${root}/src/MechanicalHealth.gs`, 'utf8');
+const runtimeHealth = fs.readFileSync(`${root}/src/RuntimeHealth.gs`, 'utf8');
 const triggerPreflight = fs.readFileSync(`${root}/src/TriggerPreflight.gs`, 'utf8');
 const driveMutation = fs.readFileSync(`${root}/src/DriveMutation.gs`, 'utf8');
 const directoryContract = fs.readFileSync(`${root}/src/DirectoryContract.gs`, 'utf8');
@@ -56,6 +58,7 @@ for (const [name, source] of [
   ['CollectorAcceptance.gs', collectorAcceptance],
   ['LockProbe.gs', lockProbe],
   ['MechanicalHealth.gs', mechanicalHealth],
+  ['RuntimeHealth.gs', runtimeHealth],
   ['TriggerPreflight.gs', triggerPreflight],
   ['DriveMutation.gs', driveMutation],
   ['DirectoryContract.gs', directoryContract],
@@ -85,6 +88,21 @@ if (!collector.includes('DriveApp.getFileById')) throw new Error('Board exact co
 if (!collectorAcceptance.includes('runOperationsBoardHealthDevReadAcceptance')) throw new Error('Board exact-read Dev acceptance entrypoint missing');
 if (!collectorAcceptance.includes('runOperationsBoardUnchangedHealthDedupAcceptance')) throw new Error('Board unchanged-health dedup acceptance entrypoint missing');
 if (collector.includes('missing_fields:parsed.missingFields')) throw new Error('Board health must not fail on non-identity field blanks');
+if (!collector.includes("kind === 'SHEET_RANGE' && mode === 'STRUCTURAL_HEALTH'")) throw new Error('Runtime structural-health dispatch missing');
+if (!runtimeHealth.includes('runtime-health-pack-v0.1')) throw new Error('Runtime Health Pack version marker missing');
+if (!runtimeHealth.includes('SCHEDULED_WORK_STRUCTURAL_HEALTH_V1')) throw new Error('Scheduled Work runtime-health selector missing');
+if (!runtimeHealth.includes('SITE_RESEARCH_STRUCTURAL_HEALTH_V1')) throw new Error('Site Research runtime-health selector missing');
+if (!runtimeHealth.includes('1HuJKzPBdgiiNWAgaO-UQQXZxVSp3wAFAoCfRry2Ih5o')) throw new Error('Scheduled Work exact runtime ID binding missing');
+if (!runtimeHealth.includes('143VnsXXg4dPDsmxg0E3pm1NZJnSDCKIkrzjkPFu5M9k')) throw new Error('Site Research exact runtime ID binding missing');
+if (!runtimeHealth.includes('RUNTIME_TRUNCATED_READ')) throw new Error('Runtime truncation fail-close missing');
+if (!runtimeHealth.includes('RUNTIME_HEADER_MISMATCH')) throw new Error('Runtime header fail-close missing');
+if (!runtimeHealth.includes('RUNTIME_SCHEMA_MARKER_MISMATCH')) throw new Error('Runtime schema-marker fail-close missing');
+if (!runtimeHealth.includes('RUNTIME_ROW_LIMIT')) throw new Error('Runtime row-overflow fail-close missing');
+if (!runtimeHealth.includes('runRuntimeHealthFixtureAcceptance')) throw new Error('Runtime fixture acceptance entrypoint missing');
+if (!runtimeHealth.includes('runRuntimeHealthDevReadAcceptance')) throw new Error('Runtime exact-read Dev acceptance entrypoint missing');
+if (/\.setValue\s*\(|\.setValues\s*\(|appendRow\s*\(|deleteRow\s*\(|Sheets\.Spreadsheets\.batchUpdate/.test(runtimeHealth)) {
+  throw new Error('RuntimeHealth source must not directly mutate source Sheets');
+}
 
 
 {
@@ -148,6 +166,45 @@ if (collector.includes('missing_fields:parsed.missingFields')) throw new Error('
 
 }
 
+{
+  const context = {console};
+  vm.createContext(context);
+  new vm.Script(collector, {filename:'Collector.gs'}).runInContext(context);
+  new vm.Script(runtimeHealth, {filename:'RuntimeHealth.gs'}).runInContext(context);
+  const fixture = context.v03RuntimeHealthFixture_;
+  const evaluate = context.v03EvaluateRuntimeHealthSnapshot_;
+  if (typeof fixture !== 'function' || typeof evaluate !== 'function') {
+    throw new Error('Runtime Health pure fixture/evaluator not callable');
+  }
+  const scheduled = evaluate('SCHEDULED_WORK', fixture('SCHEDULED_WORK'));
+  if (!scheduled.healthy || scheduled.coverage_complete !== true) {
+    throw new Error('Scheduled Work Runtime Health clean machine fixture failed');
+  }
+  const site = evaluate('SITE_RESEARCH', fixture('SITE_RESEARCH'));
+  if (!site.healthy || site.coverage_complete !== true) {
+    throw new Error('Site Research Runtime Health clean machine fixture failed');
+  }
+  const overflow = fixture('SITE_RESEARCH');
+  overflow.tabs.QUEUE.lastRow = 201;
+  let overflowClosed = false;
+  try {
+    evaluate('SITE_RESEARCH', overflow);
+  } catch (e) {
+    overflowClosed = Boolean(e && e.v03code === 'RUNTIME_ROW_LIMIT');
+  }
+  if (!overflowClosed) throw new Error('Runtime Health row overflow did not fail closed');
+
+  const headerBad = fixture('SCHEDULED_WORK');
+  headerBad.tabs.QUEUE.values[0][0] = 'job_id_changed';
+  let headerClosed = false;
+  try {
+    evaluate('SCHEDULED_WORK', headerBad);
+  } catch (e) {
+    headerClosed = Boolean(e && e.v03code === 'RUNTIME_HEADER_MISMATCH');
+  }
+  if (!headerClosed) throw new Error('Runtime Health header drift did not fail closed');
+}
+
 if (!lockProbe.includes('holdCollectorLockForOverlapProbe')) throw new Error('lock holder probe entrypoint missing');
 if (!lockProbe.includes('runCollectorLockContenderProbe')) throw new Error('lock contender probe entrypoint missing');
 if (!lockProbe.includes("run_status !== 'SKIPPED'") || !lockProbe.includes("reason !== 'LOCK_HELD'")) throw new Error('lock contender assertion missing');
@@ -190,7 +247,7 @@ for (const entrypoint of ['getDevCommandRunnerPreflight','installDevCommandRunne
   const body = devCommandRunner.slice(start, start + 500);
   if (!body.includes('requireDevRuntimeForTestMutation_();')) throw new Error(`Dev runtime guard missing at entrypoint: ${entrypoint}`);
 }
-for (const action of ['CI_CD_SMOKE','COLLECTOR_V03_ACCEPTANCE','OPERATIONS_BOARD_HEALTH_READ_ACCEPTANCE','OPERATIONS_BOARD_UNCHANGED_DEDUP_ACCEPTANCE']) {
+for (const action of ['CI_CD_SMOKE','COLLECTOR_V03_ACCEPTANCE','OPERATIONS_BOARD_HEALTH_READ_ACCEPTANCE','OPERATIONS_BOARD_UNCHANGED_DEDUP_ACCEPTANCE','RUNTIME_HEALTH_FIXTURE_ACCEPTANCE','RUNTIME_HEALTH_DEV_READ_ACCEPTANCE']) {
   if (!devCommandRunner.includes(`case '${action}'`)) throw new Error(`Dev command allowlist action missing: ${action}`);
 }
 if (!devCommandRunner.includes("throw new Error('DEV_COMMAND_ACTION_NOT_ALLOWED: ' + action)")) throw new Error('Dev command allowlist default deny missing');
@@ -294,7 +351,9 @@ if (!devWorkflow.includes('paths:')) throw new Error('automatic Dev deploy path 
 if (!devWorkflow.includes('ai-automation/gas-drive-state/src/**')) throw new Error('automatic Dev deploy source path filter missing');
 if (!devWorkflow.includes('ai-automation/gas-drive-state/.claspignore')) throw new Error('automatic Dev deploy claspignore path filter missing');
 if (!deployValidator.includes("path.resolve(root, 'DevCommandRunner.gs')")) throw new Error('Dev command runner missing from exact deploy allowlist');
+if (!deployValidator.includes("path.resolve(root, 'RuntimeHealth.gs')")) throw new Error('RuntimeHealth missing from exact deploy allowlist');
 if (!sourceComparator.includes("'DevCommandRunner'")) throw new Error('Dev command runner missing from exact readback compare set');
+if (!sourceComparator.includes("'RuntimeHealth'")) throw new Error('RuntimeHealth missing from exact readback compare set');
 if (!devWorkflow.includes('workflow_dispatch:')) throw new Error('manual Dev deploy recovery path missing');
 if (!devWorkflow.includes('environment: development')) throw new Error('development Environment boundary missing');
 if (!devWorkflow.includes('CLASPRC_JSON_DEV')) throw new Error('Dev-specific credential secret missing');
