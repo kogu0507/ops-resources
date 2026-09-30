@@ -1337,6 +1337,7 @@ function v03RuntimeHealthFixture_(runtimeKey) {
     set('template_version','v0.1');
     set('status','DONE');
     set('attempt_no','1');
+    set('claim_token','FIXTURE-CLAIM-001');
     set('result_ref','FIXTURE|RESULT');
     set('completion_check','PASS');
     set('result_readback','PASS');
