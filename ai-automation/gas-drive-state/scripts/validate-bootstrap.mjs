@@ -98,6 +98,12 @@ if (!runtimeHealth.includes('RUNTIME_TRUNCATED_READ')) throw new Error('Runtime 
 if (!runtimeHealth.includes('RUNTIME_HEADER_MISMATCH')) throw new Error('Runtime header fail-close missing');
 if (!runtimeHealth.includes('RUNTIME_SCHEMA_MARKER_MISMATCH')) throw new Error('Runtime schema-marker fail-close missing');
 if (!runtimeHealth.includes('RUNTIME_ROW_LIMIT')) throw new Error('Runtime row-overflow fail-close missing');
+if (!runtimeHealth.includes('RUNTIME_SOURCE_CHANGED_DURING_READ')) throw new Error('Runtime concurrent-change coherence fail-close missing');
+if (!runtimeHealth.includes('runtime-health-pack-v0.1.1')) throw new Error('Runtime Health review-fix version marker missing');
+if (!runtimeHealth.includes("'VERIFYING'")) throw new Error('Scheduled Work VERIFYING inflight coverage missing');
+if (!runtimeHealth.includes('TERMINAL_VALIDATION_MISMATCH')) throw new Error('Scheduled Work terminal validation issue missing');
+if (!runtimeHealth.includes('TEMPLATE_REGISTRY_INVALID')) throw new Error('Scheduled Work template registry validation missing');
+if (!collector.includes('function v03FailureIdentity_')) throw new Error('Runtime Health canonical failure identity helper missing');
 if (!runtimeHealth.includes('runRuntimeHealthFixtureAcceptance')) throw new Error('Runtime fixture acceptance entrypoint missing');
 if (!runtimeHealth.includes('runRuntimeHealthDevReadAcceptance')) throw new Error('Runtime exact-read Dev acceptance entrypoint missing');
 if (/\.setValue\s*\(|\.setValues\s*\(|appendRow\s*\(|deleteRow\s*\(|Sheets\.Spreadsheets\.batchUpdate/.test(runtimeHealth)) {
@@ -203,6 +209,12 @@ if (/\.setValue\s*\(|\.setValues\s*\(|appendRow\s*\(|deleteRow\s*\(|Sheets\.Spre
     headerClosed = Boolean(e && e.v03code === 'RUNTIME_HEADER_MISMATCH');
   }
   if (!headerClosed) throw new Error('Runtime Health header drift did not fail closed');
+
+  context.requireDevRuntimeForTestMutation_ = () => true;
+  const fullAcceptance = context.runRuntimeHealthFixtureAcceptance();
+  if (!fullAcceptance || fullAcceptance.status !== 'PASS' || fullAcceptance.cases < 25) {
+    throw new Error('Runtime Health full review-regression fixture acceptance failed');
+  }
 }
 
 if (!lockProbe.includes('holdCollectorLockForOverlapProbe')) throw new Error('lock holder probe entrypoint missing');

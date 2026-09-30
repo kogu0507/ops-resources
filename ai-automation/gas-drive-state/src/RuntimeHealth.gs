@@ -7,7 +7,7 @@
  * - incomplete/unknown coverage must never serialize as healthy.
  */
 const RUNTIME_HEALTH_V01 = Object.freeze({
-  VERSION: 'runtime-health-pack-v0.1',
+  VERSION: 'runtime-health-pack-v0.1.1',
   MAX_ISSUES: 20,
   SCHEDULED_WORK: Object.freeze({
     runtimeKey: 'SCHEDULED_WORK',
@@ -47,7 +47,16 @@ const RUNTIME_HEALTH_V01 = Object.freeze({
       })
     }),
     controlExpectations: Object.freeze({
-      schema_version: 'scheduled-work-read-plan-v0.1'
+      schema_version: 'scheduled-work-read-plan-v0.1',
+      runtime_status: 'READY',
+      runner_contract_id: '1kwNEUwA942t60sUq37CmqvzPaZtXznR6UFhxexFuSts',
+      authorized_runner_id: 'BUILD_SMOKE_RUNNER',
+      source_policy: 'READ_ONLY',
+      worker_write_scope: 'WORKER_OWNED_ONLY',
+      stale_inflight_policy: 'STOP_AND_HEALTH_RECOVERY',
+      terminal_policy: 'STRUCTURAL_VALIDATOR_REQUIRED',
+      duplicate_policy: 'DEDUPE_KEY_UNIQUE_NONCANCELLED',
+      concurrency_policy: 'SINGLE_ACTIVE_DISPATCHER_STOP_ON_INFLIGHT'
     })
   }),
   SITE_RESEARCH: Object.freeze({
@@ -120,7 +129,7 @@ function v03CollectRuntimeHealth_(tx, source) {
     );
   }
 
-  const snapshot = v03ReadRuntimeHealthSnapshot_(config);
+  const snapshot = v03ReadRuntimeHealthSnapshot_(config, meta);
   const parsed = v03EvaluateRuntimeHealthSnapshot_(config.runtimeKey, snapshot);
   const digestInput = JSON.stringify(v03RuntimeSnapshotDigestPayload_(snapshot));
   const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, digestInput)
@@ -195,8 +204,25 @@ function v03RuntimeHealthConfigForSource_(source) {
   return config;
 }
 
-function v03ReadRuntimeHealthSnapshot_(config) {
+function v03ReadRuntimeHealthSnapshot_(config, beforeMeta) {
   const ss = SpreadsheetApp.openById(config.spreadsheetId);
+  const first = v03ReadRuntimeTabsOnce_(ss, config, null);
+  const second = v03ReadRuntimeTabsOnce_(ss, config, first);
+  const afterMeta = Drive.Files.get(String(config.spreadsheetId), {
+    fields: 'id,name,mimeType,modifiedTime,version,trashed'
+  });
+
+  v03AssertRuntimeSnapshotCoherence_(config, beforeMeta, first, second, afterMeta);
+
+  return {
+    runtimeKey: config.runtimeKey,
+    spreadsheetId: config.spreadsheetId,
+    sourceVersionToken: v03RuntimeSourceVersionToken_(afterMeta),
+    tabs: second
+  };
+}
+
+function v03ReadRuntimeTabsOnce_(ss, config, previousTabs) {
   const tabs = {};
 
   Object.keys(config.tabs).forEach(tabName => {
@@ -208,6 +234,17 @@ function v03ReadRuntimeHealthSnapshot_(config) {
 
     const lastRow = sheet.getLastRow();
     const lastColumn = sheet.getLastColumn();
+    const prior = previousTabs && previousTabs[tabName];
+
+    if (prior &&
+        (Number(prior.lastRow) !== Number(lastRow) ||
+         Number(prior.lastColumn) !== Number(lastColumn))) {
+      throw v03Error_(
+        'RUNTIME_SOURCE_CHANGED_DURING_READ',
+        config.runtimeKey + ' ' + tabName + ' extent changed during bounded snapshot'
+      );
+    }
+
     if (lastRow < 1) {
       throw v03Error_('RUNTIME_HEADER_MISSING', config.runtimeKey + ' ' + tabName + ' is empty');
     }
@@ -234,11 +271,58 @@ function v03ReadRuntimeHealthSnapshot_(config) {
     };
   });
 
-  return {
-    runtimeKey: config.runtimeKey,
-    spreadsheetId: config.spreadsheetId,
-    tabs: tabs
-  };
+  return tabs;
+}
+
+function v03AssertRuntimeSnapshotCoherence_(config, beforeMeta, firstTabs, secondTabs, afterMeta) {
+  if (!beforeMeta || !afterMeta) {
+    throw v03Error_(
+      'RUNTIME_COHERENCE_EVIDENCE_MISSING',
+      config.runtimeKey + ' source metadata fence missing'
+    );
+  }
+
+  const beforeToken = v03RuntimeSourceVersionToken_(beforeMeta);
+  const afterToken = v03RuntimeSourceVersionToken_(afterMeta);
+  if (!beforeToken || !afterToken || beforeToken !== afterToken) {
+    throw v03Error_(
+      'RUNTIME_SOURCE_CHANGED_DURING_READ',
+      config.runtimeKey + ' source version/modifiedTime changed during bounded snapshot'
+    );
+  }
+
+  Object.keys(config.tabs).forEach(tabName => {
+    const first = firstTabs && firstTabs[tabName];
+    const second = secondTabs && secondTabs[tabName];
+    if (!first || !second) {
+      throw v03Error_(
+        'RUNTIME_COHERENCE_EVIDENCE_MISSING',
+        config.runtimeKey + ' missing repeated-read evidence for ' + tabName
+      );
+    }
+    if (Number(first.lastRow) !== Number(second.lastRow) ||
+        Number(first.lastColumn) !== Number(second.lastColumn)) {
+      throw v03Error_(
+        'RUNTIME_SOURCE_CHANGED_DURING_READ',
+        config.runtimeKey + ' ' + tabName + ' extent changed during bounded snapshot'
+      );
+    }
+    if (JSON.stringify(first.values) !== JSON.stringify(second.values)) {
+      throw v03Error_(
+        'RUNTIME_SOURCE_CHANGED_DURING_READ',
+        config.runtimeKey + ' ' + tabName + ' values changed during bounded snapshot'
+      );
+    }
+  });
+}
+
+function v03RuntimeSourceVersionToken_(meta) {
+  if (!meta) return '';
+  const id = String(meta.id || '');
+  const modified = String(meta.modifiedTime || '');
+  const version = String(meta.version || '');
+  if (!id || (!modified && !version)) return '';
+  return id + '|modified=' + modified + '|version=' + version;
 }
 
 function v03EvaluateRuntimeHealthSnapshot_(runtimeKey, snapshot) {
@@ -365,65 +449,222 @@ function v03ValidateRuntimeControlExpectations_(runtimeKey, controlSnapshot, con
 
 function v03EvaluateScheduledWorkHealth_(snapshot) {
   const queue = v03RuntimeRowsAsObjects_(snapshot.tabs.QUEUE);
+  const templates = v03RuntimeRowsAsObjects_(snapshot.tabs.TEMPLATE_REGISTRY);
+  const allowedStatuses = new Set([
+    'READY','PARTIAL','WORKING','VERIFYING',
+    'DONE','HUMAN_GATE','BLOCKED_SAFE','CANCELLED'
+  ]);
+  const inflightStatuses = new Set(['WORKING','VERIFYING']);
+  const terminalStatuses = new Set(['DONE','HUMAN_GATE','BLOCKED_SAFE','CANCELLED']);
+
   const duplicateJobIds = v03RuntimeDuplicateValues_(queue, 'job_id');
-  const duplicateDedupeKeys = v03RuntimeDuplicateValues_(queue, 'dedupe_key');
+  const duplicateDedupeKeys = v03RuntimeDuplicateValues_(
+    queue.filter(row => String(row.status || '').trim() !== 'CANCELLED'),
+    'dedupe_key'
+  );
   const invalidRows = [];
-  const terminalReadbackMismatches = [];
-  let inflightCount = 0;
+  const invalidStatuses = [];
+  const malformedInflight = [];
+  const terminalValidationMismatches = [];
+  const queueTemplateMismatches = [];
+  const inflightRows = [];
+
+  const templateEvaluation = v03EvaluateScheduledTemplateRegistry_(templates);
+  const validTemplateKeys = templateEvaluation.validTemplateKeys;
 
   queue.forEach((row, index) => {
-    const rowNo = index + 2;
+    const rowNo = Number(row.__row || (index + 2));
     const jobId = String(row.job_id || '').trim();
     const dedupeKey = String(row.dedupe_key || '').trim();
+    const templateKey = String(row.template_key || '').trim();
+    const templateVersion = String(row.template_version || '').trim();
     const status = String(row.status || '').trim();
-    if (!jobId || !dedupeKey || !status) {
+
+    if (!jobId || !dedupeKey || !status || !templateKey || !templateVersion) {
       invalidRows.push({
         row: rowNo,
-        reason: !jobId ? 'MISSING_JOB_ID' : (!dedupeKey ? 'MISSING_DEDUPE_KEY' : 'MISSING_STATUS')
+        reason: !jobId ? 'MISSING_JOB_ID' :
+          (!dedupeKey ? 'MISSING_DEDUPE_KEY' :
+            (!status ? 'MISSING_STATUS' :
+              (!templateKey ? 'MISSING_TEMPLATE_KEY' : 'MISSING_TEMPLATE_VERSION')))
       });
     }
-    if (['CLAIMED','RUNNING','WORKING'].includes(status)) inflightCount++;
 
-    if (status === 'DONE') {
-      const resultRef = String(row.result_ref || '').trim();
-      const completion = String(row.completion_check || '').trim();
-      const readback = String(row.result_readback || '').trim();
-      if (!resultRef || completion !== 'PASS' || readback !== 'PASS') {
-        terminalReadbackMismatches.push({
-          row: rowNo,
-          job_id: jobId,
-          result_ref_present: Boolean(resultRef),
-          completion_check: completion,
-          result_readback: readback
+    if (status && !allowedStatuses.has(status)) {
+      invalidStatuses.push({row:rowNo, job_id:jobId, status:status});
+    }
+
+    if (templateKey && templateVersion &&
+        !validTemplateKeys.has(templateKey + '|' + templateVersion)) {
+      queueTemplateMismatches.push({
+        row:rowNo,
+        job_id:jobId,
+        template_key:templateKey,
+        template_version:templateVersion
+      });
+    }
+
+    if (inflightStatuses.has(status)) {
+      inflightRows.push({row:rowNo, job_id:jobId, status:status});
+      const missing = [];
+      if (!v03RuntimePositiveInteger_(row.attempt_no)) missing.push('attempt_no');
+      if (!String(row.claim_token || '').trim()) missing.push('claim_token');
+      if (!String(row.claim_started_at || '').trim()) missing.push('claim_started_at');
+      if (status === 'VERIFYING' && !String(row.result_ref || '').trim()) {
+        missing.push('result_ref');
+      }
+      if (missing.length) {
+        malformedInflight.push({
+          row:rowNo,
+          job_id:jobId,
+          status:status,
+          missing_fields:missing
         });
       }
     }
+
+    if (terminalStatuses.has(status)) {
+      const issue = v03ScheduledTerminalValidationIssue_(row, rowNo, jobId, status);
+      if (issue) terminalValidationMismatches.push(issue);
+    }
   });
 
+  const concurrentInflight = inflightRows.length > 1 ? inflightRows : [];
   const issues = [];
   v03RuntimePushIssue_(issues, 'DUPLICATE_JOB_ID', duplicateJobIds);
-  v03RuntimePushIssue_(issues, 'DUPLICATE_DEDUPE_KEY', duplicateDedupeKeys);
+  v03RuntimePushIssue_(issues, 'DUPLICATE_DEDUPE_KEY_NONCANCELLED', duplicateDedupeKeys);
   v03RuntimePushIssue_(issues, 'INVALID_QUEUE_ROW', invalidRows);
-  v03RuntimePushIssue_(issues, 'TERMINAL_READBACK_MISMATCH', terminalReadbackMismatches);
+  v03RuntimePushIssue_(issues, 'UNKNOWN_QUEUE_STATUS', invalidStatuses);
+  v03RuntimePushIssue_(issues, 'MALFORMED_INFLIGHT', malformedInflight);
+  v03RuntimePushIssue_(issues, 'INFLIGHT_CONCURRENCY_MISMATCH', concurrentInflight);
+  v03RuntimePushIssue_(issues, 'TERMINAL_VALIDATION_MISMATCH', terminalValidationMismatches);
+  v03RuntimePushIssue_(issues, 'QUEUE_TEMPLATE_MISMATCH', queueTemplateMismatches);
+  v03RuntimePushIssue_(issues, 'TEMPLATE_REGISTRY_INVALID', templateEvaluation.issues);
 
   return v03RuntimeFinalizeEvaluation_({
     metrics: {
       queue_rows: queue.length,
       duplicate_job_ids: duplicateJobIds.length,
-      duplicate_dedupe_keys: duplicateDedupeKeys.length,
-      inflight_count: inflightCount,
-      terminal_readback_mismatches: terminalReadbackMismatches.length,
-      invalid_queue_rows: invalidRows.length
+      duplicate_dedupe_keys_noncancelled: duplicateDedupeKeys.length,
+      inflight_count: inflightRows.length,
+      malformed_inflight_rows: malformedInflight.length,
+      concurrent_inflight_rows: concurrentInflight.length,
+      terminal_validation_mismatches: terminalValidationMismatches.length,
+      invalid_queue_rows: invalidRows.length,
+      unknown_status_rows: invalidStatuses.length,
+      queue_template_mismatches: queueTemplateMismatches.length,
+      template_registry_issues: templateEvaluation.issues.length
     },
     issues: issues
   });
+}
+
+function v03EvaluateScheduledTemplateRegistry_(templates) {
+  const allowedStatuses = new Set(['CANDIDATE','STABLE']);
+  const requiredTerminalMarkers = ['attempt_no','claim_token','completion_check','result_readback'];
+  const counts = {};
+  const issues = [];
+  const validTemplateKeys = new Set();
+
+  templates.forEach((row, index) => {
+    const rowNo = Number(row.__row || (index + 2));
+    const key = String(row.template_key || '').trim();
+    const version = String(row.template_version || '').trim();
+    const status = String(row.status || '').trim();
+    const definitionFileId = String(row.definition_file_id || '').trim();
+    const terminalFields = String(row.required_terminal_fields || '').trim();
+    const freshnessRule = String(row.source_freshness_rule || '').trim();
+    const outputStoreRef = String(row.output_store_ref || '').trim();
+    const identity = key && version ? key + '|' + version : '';
+
+    if (identity) counts[identity] = (counts[identity] || 0) + 1;
+
+    const missing = [];
+    if (!key) missing.push('template_key');
+    if (!version) missing.push('template_version');
+    if (!status) missing.push('status');
+    if (!definitionFileId) missing.push('definition_file_id');
+    if (!terminalFields) missing.push('required_terminal_fields');
+    if (!freshnessRule) missing.push('source_freshness_rule');
+    if (!outputStoreRef) missing.push('output_store_ref');
+    if (missing.length) {
+      issues.push({row:rowNo, reason:'MISSING_REQUIRED_TEMPLATE_FIELD', missing_fields:missing});
+      return;
+    }
+
+    if (!allowedStatuses.has(status)) {
+      issues.push({row:rowNo, reason:'INVALID_TEMPLATE_STATUS', status:status});
+      return;
+    }
+
+    const terminalSet = new Set(terminalFields.split('|').map(x => x.trim()).filter(Boolean));
+    const missingMarkers = requiredTerminalMarkers.filter(field => !terminalSet.has(field));
+    if (missingMarkers.length) {
+      issues.push({
+        row:rowNo,
+        reason:'REQUIRED_TERMINAL_FIELD_MARKER_MISSING',
+        template_key:key,
+        template_version:version,
+        missing_fields:missingMarkers
+      });
+      return;
+    }
+
+    validTemplateKeys.add(identity);
+  });
+
+  Object.keys(counts).filter(identity => counts[identity] > 1).sort().forEach(identity => {
+    issues.push({reason:'DUPLICATE_TEMPLATE_IDENTITY', identity:identity, count:counts[identity]});
+    validTemplateKeys.delete(identity);
+  });
+
+  return {issues:issues, validTemplateKeys:validTemplateKeys};
+}
+
+function v03ScheduledTerminalValidationIssue_(row, rowNo, jobId, status) {
+  const attemptNo = String(row.attempt_no || '').trim();
+  const claimToken = String(row.claim_token || '').trim();
+  const resultRef = String(row.result_ref || '').trim();
+  const completion = String(row.completion_check || '').trim();
+  const readback = String(row.result_readback || '').trim();
+
+  const cleanPreRunCancelled = status === 'CANCELLED' &&
+    !attemptNo && !claimToken && !resultRef && !completion && !readback;
+  if (cleanPreRunCancelled) return null;
+
+  const problems = [];
+  if (!v03RuntimePositiveInteger_(attemptNo)) problems.push('attempt_no');
+  if (!claimToken) problems.push('claim_token');
+  if (!resultRef) problems.push('result_ref');
+  if (completion !== 'PASS') problems.push('completion_check');
+  if (readback !== 'PASS') problems.push('result_readback');
+
+  if (!problems.length) return null;
+  return {
+    row:rowNo,
+    job_id:jobId,
+    status:status,
+    invalid_or_missing_fields:problems,
+    completion_check:completion,
+    result_readback:readback
+  };
+}
+
+function v03RuntimePositiveInteger_(value) {
+  const raw = String(value === undefined || value === null ? '' : value).trim();
+  if (!/^\d+$/.test(raw)) return false;
+  return Number(raw) >= 1;
 }
 
 function v03EvaluateSiteResearchHealth_(snapshot) {
   const queue = v03RuntimeRowsAsObjects_(snapshot.tabs.QUEUE);
   const duplicateItemIds = v03RuntimeDuplicateValues_(queue, 'item_id');
   const duplicateQueueOrders = v03RuntimeDuplicateValues_(queue, 'queue_order');
+  const allowedStatuses = new Set([
+    'CANDIDATE','READY','RUNNING','WORKING','DONE','BLOCKED'
+  ]);
   const invalidRows = [];
+  const invalidStatuses = [];
   const readyGaps = [];
   const doneGaps = [];
   const workingRows = [];
@@ -434,7 +675,7 @@ function v03EvaluateSiteResearchHealth_(snapshot) {
   ];
 
   queue.forEach((row, index) => {
-    const rowNo = index + 2;
+    const rowNo = Number(row.__row || (index + 2));
     const itemId = String(row.item_id || '').trim();
     const queueOrder = String(row.queue_order || '').trim();
     const status = String(row.status || '').trim();
@@ -446,8 +687,12 @@ function v03EvaluateSiteResearchHealth_(snapshot) {
       });
     }
 
-    if (status === 'WORKING') {
-      workingRows.push({row:rowNo, item_id:itemId});
+    if (status && !allowedStatuses.has(status)) {
+      invalidStatuses.push({row:rowNo, item_id:itemId, status:status});
+    }
+
+    if (status === 'WORKING' || status === 'RUNNING') {
+      workingRows.push({row:rowNo, item_id:itemId, status:status});
     }
 
     if (status === 'READY') {
@@ -471,6 +716,7 @@ function v03EvaluateSiteResearchHealth_(snapshot) {
   v03RuntimePushIssue_(issues, 'DUPLICATE_ITEM_ID', duplicateItemIds);
   v03RuntimePushIssue_(issues, 'DUPLICATE_QUEUE_ORDER', duplicateQueueOrders);
   v03RuntimePushIssue_(issues, 'INVALID_QUEUE_ROW', invalidRows);
+  v03RuntimePushIssue_(issues, 'UNKNOWN_QUEUE_STATUS', invalidStatuses);
   v03RuntimePushIssue_(issues, 'WORKING_CONCURRENCY_MISMATCH', workingMismatch);
   v03RuntimePushIssue_(issues, 'READY_REQUIRED_FIELD_GAP', readyGaps);
   v03RuntimePushIssue_(issues, 'DONE_RESULT_EVIDENCE_GAP', doneGaps);
@@ -483,7 +729,8 @@ function v03EvaluateSiteResearchHealth_(snapshot) {
       working_count: workingRows.length,
       ready_required_field_gaps: readyGaps.length,
       done_result_evidence_gaps: doneGaps.length,
-      invalid_queue_rows: invalidRows.length
+      invalid_queue_rows: invalidRows.length,
+      unknown_status_rows: invalidStatuses.length
     },
     issues: issues
   });
@@ -493,15 +740,18 @@ function v03RuntimeRowsAsObjects_(tabSnapshot) {
   const values = tabSnapshot.values || [];
   if (!values.length) return [];
   const headers = values[0].map(v => String(v || '').trim());
-  return values.slice(1).filter(row =>
-    row.some(value => String(value === undefined ? '' : value).trim() !== '')
-  ).map(row => {
-    const obj = {};
-    headers.forEach((header, index) => {
-      obj[header] = row[index] === undefined ? '' : row[index];
+  return values.slice(1)
+    .map((row, index) => ({row:row, physicalRow:index + 2}))
+    .filter(entry =>
+      entry.row.some(value => String(value === undefined ? '' : value).trim() !== '')
+    )
+    .map(entry => {
+      const obj = {__row:entry.physicalRow};
+      headers.forEach((header, index) => {
+        obj[header] = entry.row[index] === undefined ? '' : entry.row[index];
+      });
+      return obj;
     });
-    return obj;
-  });
 }
 
 function v03RuntimeDuplicateValues_(rows, field) {
@@ -548,25 +798,152 @@ function runRuntimeHealthFixtureAcceptance() {
   v03RuntimeAssert_(scheduledResult.healthy, 'clean Scheduled Work fixture must be healthy');
 
   const scheduledDup = v03RuntimeHealthFixture_('SCHEDULED_WORK');
-  scheduledDup.tabs.QUEUE.values.push(scheduledDup.tabs.QUEUE.values[1].slice());
+  const dupRow = scheduledDup.tabs.QUEUE.values[1].slice();
+  dupRow[0] = 'FIXTURE-JOB-002';
+  scheduledDup.tabs.QUEUE.values.push(dupRow);
   scheduledDup.tabs.QUEUE.lastRow++;
   const scheduledDupResult = v03EvaluateRuntimeHealthSnapshot_('SCHEDULED_WORK', scheduledDup);
-  v03RuntimeAssert_(!scheduledDupResult.healthy, 'Scheduled duplicate identity must fail health');
+  v03RuntimeAssert_(!scheduledDupResult.healthy, 'Scheduled duplicate dedupe must fail health');
   v03RuntimeAssert_(
-    scheduledDupResult.metrics.duplicate_job_ids === 1 &&
-      scheduledDupResult.metrics.duplicate_dedupe_keys === 1,
-    'Scheduled duplicate identity metrics mismatch'
+    scheduledDupResult.metrics.duplicate_dedupe_keys_noncancelled === 1,
+    'Scheduled duplicate dedupe metric mismatch'
   );
 
   const scheduledTerminal = v03RuntimeHealthFixture_('SCHEDULED_WORK');
-  scheduledTerminal.tabs.QUEUE.values[1][20] = 'FAIL';
+  const sqh = RUNTIME_HEALTH_V01.SCHEDULED_WORK.tabs.QUEUE.headers;
+  scheduledTerminal.tabs.QUEUE.values[1][sqh.indexOf('result_readback')] = 'FAIL';
   const scheduledTerminalResult = v03EvaluateRuntimeHealthSnapshot_(
     'SCHEDULED_WORK',
     scheduledTerminal
   );
   v03RuntimeAssert_(
-    scheduledTerminalResult.metrics.terminal_readback_mismatches === 1,
+    scheduledTerminalResult.metrics.terminal_validation_mismatches === 1,
     'Scheduled terminal/readback mismatch not detected'
+  );
+
+  const scheduledWorking = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  scheduledWorking.tabs.QUEUE.values[1][sqh.indexOf('status')] = 'WORKING';
+  scheduledWorking.tabs.QUEUE.values[1][sqh.indexOf('claim_started_at')] = 'provider-time-present';
+  scheduledWorking.tabs.QUEUE.values[1][sqh.indexOf('result_ref')] = '';
+  scheduledWorking.tabs.QUEUE.values[1][sqh.indexOf('completion_check')] = '';
+  scheduledWorking.tabs.QUEUE.values[1][sqh.indexOf('result_readback')] = '';
+  const scheduledWorkingResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledWorking
+  );
+  v03RuntimeAssert_(
+    scheduledWorkingResult.healthy && scheduledWorkingResult.metrics.inflight_count === 1,
+    'one legitimate WORKING row must be represented without false failure'
+  );
+
+  const scheduledVerifying = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  scheduledVerifying.tabs.QUEUE.values[1][sqh.indexOf('status')] = 'VERIFYING';
+  scheduledVerifying.tabs.QUEUE.values[1][sqh.indexOf('claim_started_at')] = 'provider-time-present';
+  scheduledVerifying.tabs.QUEUE.values[1][sqh.indexOf('completion_check')] = '';
+  scheduledVerifying.tabs.QUEUE.values[1][sqh.indexOf('result_readback')] = '';
+  const scheduledVerifyingResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledVerifying
+  );
+  v03RuntimeAssert_(
+    scheduledVerifyingResult.healthy && scheduledVerifyingResult.metrics.inflight_count === 1,
+    'one legitimate VERIFYING row must be represented without false failure'
+  );
+
+  const scheduledConcurrent = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  scheduledConcurrent.tabs.QUEUE.values[1][sqh.indexOf('status')] = 'WORKING';
+  scheduledConcurrent.tabs.QUEUE.values[1][sqh.indexOf('claim_started_at')] = 'provider-time-present';
+  scheduledConcurrent.tabs.QUEUE.values[1][sqh.indexOf('result_ref')] = '';
+  scheduledConcurrent.tabs.QUEUE.values[1][sqh.indexOf('completion_check')] = '';
+  scheduledConcurrent.tabs.QUEUE.values[1][sqh.indexOf('result_readback')] = '';
+  const secondWorking = scheduledConcurrent.tabs.QUEUE.values[1].slice();
+  secondWorking[sqh.indexOf('job_id')] = 'FIXTURE-JOB-002';
+  secondWorking[sqh.indexOf('dedupe_key')] = 'FIXTURE|JOB|002';
+  secondWorking[sqh.indexOf('claim_token')] = 'FIXTURE-CLAIM-002';
+  scheduledConcurrent.tabs.QUEUE.values.push(secondWorking);
+  scheduledConcurrent.tabs.QUEUE.lastRow++;
+  const scheduledConcurrentResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledConcurrent
+  );
+  v03RuntimeAssert_(
+    !scheduledConcurrentResult.healthy &&
+      scheduledConcurrentResult.metrics.concurrent_inflight_rows === 2,
+    'multiple Scheduled Work inflight rows must fail health'
+  );
+
+  const scheduledMalformedInflight = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  scheduledMalformedInflight.tabs.QUEUE.values[1][sqh.indexOf('status')] = 'WORKING';
+  scheduledMalformedInflight.tabs.QUEUE.values[1][sqh.indexOf('claim_token')] = '';
+  scheduledMalformedInflight.tabs.QUEUE.values[1][sqh.indexOf('claim_started_at')] = '';
+  const malformedInflightResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledMalformedInflight
+  );
+  v03RuntimeAssert_(
+    !malformedInflightResult.healthy &&
+      malformedInflightResult.metrics.malformed_inflight_rows === 1,
+    'malformed inflight must fail health'
+  );
+
+  const scheduledHumanGate = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  scheduledHumanGate.tabs.QUEUE.values[1][sqh.indexOf('status')] = 'HUMAN_GATE';
+  scheduledHumanGate.tabs.QUEUE.values[1][sqh.indexOf('result_ref')] = '';
+  scheduledHumanGate.tabs.QUEUE.values[1][sqh.indexOf('completion_check')] = '';
+  scheduledHumanGate.tabs.QUEUE.values[1][sqh.indexOf('result_readback')] = '';
+  const humanGateResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledHumanGate
+  );
+  v03RuntimeAssert_(
+    !humanGateResult.healthy && humanGateResult.metrics.terminal_validation_mismatches === 1,
+    'invalid non-DONE terminal must fail health'
+  );
+
+  const scheduledUnknown = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  scheduledUnknown.tabs.QUEUE.values[1][sqh.indexOf('status')] = 'BOGUS';
+  const scheduledUnknownResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledUnknown
+  );
+  v03RuntimeAssert_(
+    !scheduledUnknownResult.healthy && scheduledUnknownResult.metrics.unknown_status_rows === 1,
+    'unknown Scheduled Work status must fail health'
+  );
+
+  const scheduledControl = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  const controlRows = scheduledControl.tabs.CONTROL.values;
+  const sourcePolicyRow = controlRows.find(row => row[0] === 'source_policy');
+  sourcePolicyRow[1] = 'WRITE_ALLOWED';
+  v03RuntimeExpectCode_(
+    () => v03EvaluateRuntimeHealthSnapshot_('SCHEDULED_WORK', scheduledControl),
+    'RUNTIME_SCHEMA_MARKER_MISMATCH',
+    'Scheduled Work CONTROL predicate drift must fail closed'
+  );
+
+  const scheduledTemplate = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  const sth = RUNTIME_HEALTH_V01.SCHEDULED_WORK.tabs.TEMPLATE_REGISTRY.headers;
+  scheduledTemplate.tabs.TEMPLATE_REGISTRY.values[1][sth.indexOf('definition_file_id')] = '';
+  const scheduledTemplateResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledTemplate
+  );
+  v03RuntimeAssert_(
+    !scheduledTemplateResult.healthy &&
+      scheduledTemplateResult.metrics.template_registry_issues === 1,
+    'Scheduled Work missing template locator must fail health'
+  );
+
+  const scheduledQueueTemplate = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  scheduledQueueTemplate.tabs.QUEUE.values[1][sqh.indexOf('template_key')] = 'UNKNOWN_TEMPLATE';
+  const scheduledQueueTemplateResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledQueueTemplate
+  );
+  v03RuntimeAssert_(
+    !scheduledQueueTemplateResult.healthy &&
+      scheduledQueueTemplateResult.metrics.queue_template_mismatches === 1,
+    'Scheduled Work unknown queue template must fail health'
   );
 
   const siteClean = v03RuntimeHealthFixture_('SITE_RESEARCH');
@@ -604,6 +981,14 @@ function runRuntimeHealthFixtureAcceptance() {
     'Site Research DONE result/evidence gap not detected'
   );
 
+  const siteUnknown = v03RuntimeHealthFixture_('SITE_RESEARCH');
+  siteUnknown.tabs.QUEUE.values[1][2] = 'BOGUS';
+  const siteUnknownResult = v03EvaluateRuntimeHealthSnapshot_('SITE_RESEARCH', siteUnknown);
+  v03RuntimeAssert_(
+    !siteUnknownResult.healthy && siteUnknownResult.metrics.unknown_status_rows === 1,
+    'unknown Site Research status must fail health'
+  );
+
   const headerBad = v03RuntimeHealthFixture_('SCHEDULED_WORK');
   headerBad.tabs.QUEUE.values[0][0] = 'job_id_changed';
   v03RuntimeExpectCode_(
@@ -636,8 +1021,6 @@ function runRuntimeHealthFixtureAcceptance() {
     'schema marker drift must fail closed'
   );
 
-  // Failure isolation: one malformed parser source cannot turn the other source unhealthy
-  // or let the malformed source serialize as healthy.
   const isolatedScheduled = v03EvaluateRuntimeHealthSnapshot_(
     'SCHEDULED_WORK',
     v03RuntimeHealthFixture_('SCHEDULED_WORK')
@@ -653,15 +1036,158 @@ function runRuntimeHealthFixtureAcceptance() {
   v03RuntimeAssert_(isolatedScheduled.healthy, 'healthy source changed during failure-isolation fixture');
   v03RuntimeAssert_(isolatedSiteFailed, 'malformed source did not fail closed in isolation fixture');
 
+  v03RuntimeCoherenceFixtureAcceptance_();
+  v03RuntimeHealthIdentityLifecycleAcceptance_();
+
   const result = {
     status: 'PASS',
     contract: RUNTIME_HEALTH_V01.VERSION,
-    cases: 11,
+    cases: 25,
     scheduled_clean: scheduledResult.metrics,
     site_research_clean: siteResult.metrics
   };
   console.log(JSON.stringify(result));
   return result;
+}
+
+function v03RuntimeCoherenceFixtureAcceptance_() {
+  const config = RUNTIME_HEALTH_V01.SITE_RESEARCH;
+  const base = v03RuntimeHealthFixture_('SITE_RESEARCH').tabs;
+  const meta = {
+    id:config.spreadsheetId,
+    modifiedTime:'2026-10-01T00:00:00Z',
+    version:'100'
+  };
+  const clone = value => JSON.parse(JSON.stringify(value));
+
+  v03AssertRuntimeSnapshotCoherence_(config, meta, clone(base), clone(base), meta);
+
+  const appendGrowth = clone(base);
+  appendGrowth.QUEUE.lastRow++;
+  appendGrowth.QUEUE.values.push(appendGrowth.QUEUE.values[1].slice());
+  v03RuntimeExpectCode_(
+    () => v03AssertRuntimeSnapshotCoherence_(config, meta, clone(base), appendGrowth, meta),
+    'RUNTIME_SOURCE_CHANGED_DURING_READ',
+    'append growth interleaving must fail closed'
+  );
+
+  const columnGrowth = clone(base);
+  columnGrowth.QUEUE.lastColumn++;
+  columnGrowth.QUEUE.values[0].push('unexpected');
+  columnGrowth.QUEUE.values[1].push('value');
+  v03RuntimeExpectCode_(
+    () => v03AssertRuntimeSnapshotCoherence_(config, meta, clone(base), columnGrowth, meta),
+    'RUNTIME_SOURCE_CHANGED_DURING_READ',
+    'column growth interleaving must fail closed'
+  );
+
+  const sameExtent = clone(base);
+  sameExtent.QUEUE.values[1][4] = 'changed during read';
+  v03RuntimeExpectCode_(
+    () => v03AssertRuntimeSnapshotCoherence_(config, meta, clone(base), sameExtent, meta),
+    'RUNTIME_SOURCE_CHANGED_DURING_READ',
+    'same-extent content update interleaving must fail closed'
+  );
+
+  const changedMeta = Object.assign({}, meta, {
+    modifiedTime:'2026-10-01T00:00:01Z',
+    version:'101'
+  });
+  v03RuntimeExpectCode_(
+    () => v03AssertRuntimeSnapshotCoherence_(config, meta, clone(base), clone(base), changedMeta),
+    'RUNTIME_SOURCE_CHANGED_DURING_READ',
+    'source version change interleaving must fail closed'
+  );
+}
+
+function v03RuntimeHealthIdentityLifecycleAcceptance_() {
+  const config = RUNTIME_HEALTH_V01.SCHEDULED_WORK;
+  const source = {
+    source_key:'T-RHP-IDENTITY-LIFECYCLE',
+    source_kind:'SHEET_RANGE',
+    source_ref:config.spreadsheetId,
+    authority_ref:config.spreadsheetId,
+    selector:config.selector,
+    collection_mode:'STRUCTURAL_HEALTH',
+    stale_after_minutes:60,
+    expected_identity:config.expectedIdentity
+  };
+  const tx = v03RuntimeHealthFixtureTx_();
+  const successIdentity = v03BaseIdentity_(
+    source,
+    'RUNTIME_HEALTH',
+    config.selector,
+    config.spreadsheetId
+  );
+
+  v03RecordSourceFailure_(
+    tx,
+    source,
+    v03Error_('RUNTIME_SCHEMA_WIDTH_MISMATCH','fixture first failure')
+  );
+  v03RuntimeAssert_(tx.stateRows.length === 1, 'first failure must create one state row');
+  v03RuntimeAssert_(
+    tx.stateRows[0].entity_kind === 'RUNTIME_HEALTH' &&
+      tx.stateRows[0].entity_key === config.selector,
+    'first Runtime Health failure must use canonical stable identity'
+  );
+
+  v03UpsertState_(tx, successIdentity, {
+    collection_status:'SUCCESS',
+    stale_state:'FRESH',
+    mechanical_signal:'NONE',
+    stale_after_minutes:60
+  });
+  v03RuntimeAssert_(
+    tx.stateRows.length === 1 && tx.stateRows[0].collection_status === 'SUCCESS',
+    'first-failure to success recovery must preserve one canonical row'
+  );
+
+  v03RecordSourceFailure_(
+    tx,
+    source,
+    v03Error_('RUNTIME_SOURCE_CHANGED_DURING_READ','fixture later failure')
+  );
+  v03RuntimeAssert_(
+    tx.stateRows.length === 1 &&
+      tx.stateRows[0].collection_status === 'ERROR' &&
+      tx.stateRows[0].stale_state === 'UNKNOWN',
+    'prior-success to failure must preserve canonical row and fail closed'
+  );
+
+  v03UpsertState_(tx, successIdentity, {
+    collection_status:'SUCCESS',
+    stale_state:'FRESH',
+    mechanical_signal:'NONE',
+    stale_after_minutes:60
+  });
+  v03RuntimeAssert_(
+    tx.stateRows.length === 1 &&
+      tx.stateRows[0].collection_status === 'SUCCESS' &&
+      tx.stateRows[0].entity_kind === 'RUNTIME_HEALTH' &&
+      tx.stateRows[0].entity_key === config.selector,
+    'prior-success to failure to success recovery must remain recoverable'
+  );
+}
+
+function v03RuntimeHealthFixtureTx_() {
+  return {
+    stateHeader:[
+      'state_key','source_key','entity_kind','entity_key','source_ref','authority_ref',
+      'observed_name','observed_mime_type','observed_modified_at','source_version_signal',
+      'collected_at','collection_status','last_collection_success_at','last_collection_error_at',
+      'last_collection_error_code','last_collection_error','stale_after_minutes','stale_state',
+      'mechanical_signal','mechanical_signal_detail','judge_status'
+    ],
+    stateRows:[],
+    dirtyCells:new Map(),
+    newStateRows:[],
+    stateSheetId:0,
+    runSheetId:0,
+    runHeader:[],
+    runAppend:null,
+    spreadsheetId:'TEST'
+  };
 }
 
 function runRuntimeHealthDevReadAcceptance() {
@@ -811,6 +1337,7 @@ function v03RuntimeHealthFixture_(runtimeKey) {
     set('template_version','v0.1');
     set('status','DONE');
     set('attempt_no','1');
+    set('claim_token','FIXTURE-CLAIM-001');
     set('result_ref','FIXTURE|RESULT');
     set('completion_check','PASS');
     set('result_readback','PASS');
@@ -822,6 +1349,11 @@ function v03RuntimeHealthFixture_(runtimeKey) {
     template[t.indexOf('template_key')] = 'WORKER_HEALTH';
     template[t.indexOf('template_version')] = 'v0.1';
     template[t.indexOf('status')] = 'CANDIDATE';
+    template[t.indexOf('definition_file_id')] = 'FIXTURE-DEFINITION-ID';
+    template[t.indexOf('required_terminal_fields')] =
+      'job_id|template_key|template_version|attempt_no|claim_token|completion_check|result_readback';
+    template[t.indexOf('source_freshness_rule')] = 'fresh fixture source every attempt';
+    template[t.indexOf('output_store_ref')] = 'FIXTURE_STORE';
     tabs.TEMPLATE_REGISTRY.values.push(template);
     tabs.TEMPLATE_REGISTRY.lastRow++;
 
