@@ -6,7 +6,7 @@
  * in one Google Sheets spreadsheets.batchUpdate request.
  */
 const COLLECTOR_V03 = Object.freeze({
-  VERSION: 'collector-v0.6.0-dev-board-health',
+  VERSION: 'collector-v0.7.0-dev-runtime-health',
   DEV_SCRIPT_ID: '1Txo4FJmWuJtq76e2v3nLrcw2fv1MlMTHJZnFj_lSvhE_7AZVr4UjC2zs',
   PROD_SCRIPT_ID: '1r3y9O0_Du-QAoxKiJRP5nCSnLzrMo5IFTV3m1ex2KsvQCFNR5d0qoLBL',
   TEST_SPREADSHEET_ID: '1Lu7bqDpNtNsmZJsIGzah0T_mxABen6gEbqHqFZ7AKz0',
@@ -170,6 +170,9 @@ function v03CollectSource_(tx, source) {
   v03ValidateSource_(source);
   const kind = String(source.source_kind || '');
   const mode = String(source.collection_mode || 'METADATA');
+  if (kind === 'SHEET_RANGE' && mode === 'STRUCTURAL_HEALTH') {
+    return v03CollectRuntimeHealth_(tx, source);
+  }
   if (kind === 'FILE' && mode === 'BOUNDED_CONTENT') {
     if (String(source.selector || '') !== COLLECTOR_V03.OPERATIONS_BOARD_SELECTOR) {
       throw v03Error_(
