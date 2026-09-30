@@ -7,7 +7,7 @@
  * - incomplete/unknown coverage must never serialize as healthy.
  */
 const RUNTIME_HEALTH_V01 = Object.freeze({
-  VERSION: 'runtime-health-pack-v0.1',
+  VERSION: 'runtime-health-pack-v0.1.1',
   MAX_ISSUES: 20,
   SCHEDULED_WORK: Object.freeze({
     runtimeKey: 'SCHEDULED_WORK',
@@ -47,7 +47,16 @@ const RUNTIME_HEALTH_V01 = Object.freeze({
       })
     }),
     controlExpectations: Object.freeze({
-      schema_version: 'scheduled-work-read-plan-v0.1'
+      schema_version: 'scheduled-work-read-plan-v0.1',
+      runtime_status: 'READY',
+      runner_contract_id: '1kwNEUwA942t60sUq37CmqvzPaZtXznR6UFhxexFuSts',
+      authorized_runner_id: 'BUILD_SMOKE_RUNNER',
+      source_policy: 'READ_ONLY',
+      worker_write_scope: 'WORKER_OWNED_ONLY',
+      stale_inflight_policy: 'STOP_AND_HEALTH_RECOVERY',
+      terminal_policy: 'STRUCTURAL_VALIDATOR_REQUIRED',
+      duplicate_policy: 'DEDUPE_KEY_UNIQUE_NONCANCELLED',
+      concurrency_policy: 'SINGLE_ACTIVE_DISPATCHER_STOP_ON_INFLIGHT'
     })
   }),
   SITE_RESEARCH: Object.freeze({
@@ -120,7 +129,7 @@ function v03CollectRuntimeHealth_(tx, source) {
     );
   }
 
-  const snapshot = v03ReadRuntimeHealthSnapshot_(config);
+  const snapshot = v03ReadRuntimeHealthSnapshot_(config, meta);
   const parsed = v03EvaluateRuntimeHealthSnapshot_(config.runtimeKey, snapshot);
   const digestInput = JSON.stringify(v03RuntimeSnapshotDigestPayload_(snapshot));
   const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, digestInput)
@@ -195,8 +204,25 @@ function v03RuntimeHealthConfigForSource_(source) {
   return config;
 }
 
-function v03ReadRuntimeHealthSnapshot_(config) {
+function v03ReadRuntimeHealthSnapshot_(config, beforeMeta) {
   const ss = SpreadsheetApp.openById(config.spreadsheetId);
+  const first = v03ReadRuntimeTabsOnce_(ss, config, null);
+  const second = v03ReadRuntimeTabsOnce_(ss, config, first);
+  const afterMeta = Drive.Files.get(String(config.spreadsheetId), {
+    fields: 'id,name,mimeType,modifiedTime,version,trashed'
+  });
+
+  v03AssertRuntimeSnapshotCoherence_(config, beforeMeta, first, second, afterMeta);
+
+  return {
+    runtimeKey: config.runtimeKey,
+    spreadsheetId: config.spreadsheetId,
+    sourceVersionToken: v03RuntimeSourceVersionToken_(afterMeta),
+    tabs: second
+  };
+}
+
+function v03ReadRuntimeTabsOnce_(ss, config, previousTabs) {
   const tabs = {};
 
   Object.keys(config.tabs).forEach(tabName => {
@@ -208,6 +234,17 @@ function v03ReadRuntimeHealthSnapshot_(config) {
 
     const lastRow = sheet.getLastRow();
     const lastColumn = sheet.getLastColumn();
+    const prior = previousTabs && previousTabs[tabName];
+
+    if (prior &&
+        (Number(prior.lastRow) !== Number(lastRow) ||
+         Number(prior.lastColumn) !== Number(lastColumn))) {
+      throw v03Error_(
+        'RUNTIME_SOURCE_CHANGED_DURING_READ',
+        config.runtimeKey + ' ' + tabName + ' extent changed during bounded snapshot'
+      );
+    }
+
     if (lastRow < 1) {
       throw v03Error_('RUNTIME_HEADER_MISSING', config.runtimeKey + ' ' + tabName + ' is empty');
     }
@@ -234,11 +271,58 @@ function v03ReadRuntimeHealthSnapshot_(config) {
     };
   });
 
-  return {
-    runtimeKey: config.runtimeKey,
-    spreadsheetId: config.spreadsheetId,
-    tabs: tabs
-  };
+  return tabs;
+}
+
+function v03AssertRuntimeSnapshotCoherence_(config, beforeMeta, firstTabs, secondTabs, afterMeta) {
+  if (!beforeMeta || !afterMeta) {
+    throw v03Error_(
+      'RUNTIME_COHERENCE_EVIDENCE_MISSING',
+      config.runtimeKey + ' source metadata fence missing'
+    );
+  }
+
+  const beforeToken = v03RuntimeSourceVersionToken_(beforeMeta);
+  const afterToken = v03RuntimeSourceVersionToken_(afterMeta);
+  if (!beforeToken || !afterToken || beforeToken !== afterToken) {
+    throw v03Error_(
+      'RUNTIME_SOURCE_CHANGED_DURING_READ',
+      config.runtimeKey + ' source version/modifiedTime changed during bounded snapshot'
+    );
+  }
+
+  Object.keys(config.tabs).forEach(tabName => {
+    const first = firstTabs && firstTabs[tabName];
+    const second = secondTabs && secondTabs[tabName];
+    if (!first || !second) {
+      throw v03Error_(
+        'RUNTIME_COHERENCE_EVIDENCE_MISSING',
+        config.runtimeKey + ' missing repeated-read evidence for ' + tabName
+      );
+    }
+    if (Number(first.lastRow) !== Number(second.lastRow) ||
+        Number(first.lastColumn) !== Number(second.lastColumn)) {
+      throw v03Error_(
+        'RUNTIME_SOURCE_CHANGED_DURING_READ',
+        config.runtimeKey + ' ' + tabName + ' extent changed during bounded snapshot'
+      );
+    }
+    if (JSON.stringify(first.values) !== JSON.stringify(second.values)) {
+      throw v03Error_(
+        'RUNTIME_SOURCE_CHANGED_DURING_READ',
+        config.runtimeKey + ' ' + tabName + ' values changed during bounded snapshot'
+      );
+    }
+  });
+}
+
+function v03RuntimeSourceVersionToken_(meta) {
+  if (!meta) return '';
+  const id = String(meta.id || '');
+  const modified = String(meta.modifiedTime || '');
+  const version = String(meta.version || '');
+  if (!id || (!modified && !version)) return '';
+  return id + '|modified=' + modified + '|version=' + version;
 }
 
 function v03EvaluateRuntimeHealthSnapshot_(runtimeKey, snapshot) {
