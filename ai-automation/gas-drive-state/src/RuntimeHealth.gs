@@ -798,25 +798,152 @@ function runRuntimeHealthFixtureAcceptance() {
   v03RuntimeAssert_(scheduledResult.healthy, 'clean Scheduled Work fixture must be healthy');
 
   const scheduledDup = v03RuntimeHealthFixture_('SCHEDULED_WORK');
-  scheduledDup.tabs.QUEUE.values.push(scheduledDup.tabs.QUEUE.values[1].slice());
+  const dupRow = scheduledDup.tabs.QUEUE.values[1].slice();
+  dupRow[0] = 'FIXTURE-JOB-002';
+  scheduledDup.tabs.QUEUE.values.push(dupRow);
   scheduledDup.tabs.QUEUE.lastRow++;
   const scheduledDupResult = v03EvaluateRuntimeHealthSnapshot_('SCHEDULED_WORK', scheduledDup);
-  v03RuntimeAssert_(!scheduledDupResult.healthy, 'Scheduled duplicate identity must fail health');
+  v03RuntimeAssert_(!scheduledDupResult.healthy, 'Scheduled duplicate dedupe must fail health');
   v03RuntimeAssert_(
-    scheduledDupResult.metrics.duplicate_job_ids === 1 &&
-      scheduledDupResult.metrics.duplicate_dedupe_keys === 1,
-    'Scheduled duplicate identity metrics mismatch'
+    scheduledDupResult.metrics.duplicate_dedupe_keys_noncancelled === 1,
+    'Scheduled duplicate dedupe metric mismatch'
   );
 
   const scheduledTerminal = v03RuntimeHealthFixture_('SCHEDULED_WORK');
-  scheduledTerminal.tabs.QUEUE.values[1][20] = 'FAIL';
+  const sqh = RUNTIME_HEALTH_V01.SCHEDULED_WORK.tabs.QUEUE.headers;
+  scheduledTerminal.tabs.QUEUE.values[1][sqh.indexOf('result_readback')] = 'FAIL';
   const scheduledTerminalResult = v03EvaluateRuntimeHealthSnapshot_(
     'SCHEDULED_WORK',
     scheduledTerminal
   );
   v03RuntimeAssert_(
-    scheduledTerminalResult.metrics.terminal_readback_mismatches === 1,
+    scheduledTerminalResult.metrics.terminal_validation_mismatches === 1,
     'Scheduled terminal/readback mismatch not detected'
+  );
+
+  const scheduledWorking = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  scheduledWorking.tabs.QUEUE.values[1][sqh.indexOf('status')] = 'WORKING';
+  scheduledWorking.tabs.QUEUE.values[1][sqh.indexOf('claim_started_at')] = 'provider-time-present';
+  scheduledWorking.tabs.QUEUE.values[1][sqh.indexOf('result_ref')] = '';
+  scheduledWorking.tabs.QUEUE.values[1][sqh.indexOf('completion_check')] = '';
+  scheduledWorking.tabs.QUEUE.values[1][sqh.indexOf('result_readback')] = '';
+  const scheduledWorkingResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledWorking
+  );
+  v03RuntimeAssert_(
+    scheduledWorkingResult.healthy && scheduledWorkingResult.metrics.inflight_count === 1,
+    'one legitimate WORKING row must be represented without false failure'
+  );
+
+  const scheduledVerifying = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  scheduledVerifying.tabs.QUEUE.values[1][sqh.indexOf('status')] = 'VERIFYING';
+  scheduledVerifying.tabs.QUEUE.values[1][sqh.indexOf('claim_started_at')] = 'provider-time-present';
+  scheduledVerifying.tabs.QUEUE.values[1][sqh.indexOf('completion_check')] = '';
+  scheduledVerifying.tabs.QUEUE.values[1][sqh.indexOf('result_readback')] = '';
+  const scheduledVerifyingResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledVerifying
+  );
+  v03RuntimeAssert_(
+    scheduledVerifyingResult.healthy && scheduledVerifyingResult.metrics.inflight_count === 1,
+    'one legitimate VERIFYING row must be represented without false failure'
+  );
+
+  const scheduledConcurrent = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  scheduledConcurrent.tabs.QUEUE.values[1][sqh.indexOf('status')] = 'WORKING';
+  scheduledConcurrent.tabs.QUEUE.values[1][sqh.indexOf('claim_started_at')] = 'provider-time-present';
+  scheduledConcurrent.tabs.QUEUE.values[1][sqh.indexOf('result_ref')] = '';
+  scheduledConcurrent.tabs.QUEUE.values[1][sqh.indexOf('completion_check')] = '';
+  scheduledConcurrent.tabs.QUEUE.values[1][sqh.indexOf('result_readback')] = '';
+  const secondWorking = scheduledConcurrent.tabs.QUEUE.values[1].slice();
+  secondWorking[sqh.indexOf('job_id')] = 'FIXTURE-JOB-002';
+  secondWorking[sqh.indexOf('dedupe_key')] = 'FIXTURE|JOB|002';
+  secondWorking[sqh.indexOf('claim_token')] = 'FIXTURE-CLAIM-002';
+  scheduledConcurrent.tabs.QUEUE.values.push(secondWorking);
+  scheduledConcurrent.tabs.QUEUE.lastRow++;
+  const scheduledConcurrentResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledConcurrent
+  );
+  v03RuntimeAssert_(
+    !scheduledConcurrentResult.healthy &&
+      scheduledConcurrentResult.metrics.concurrent_inflight_rows === 2,
+    'multiple Scheduled Work inflight rows must fail health'
+  );
+
+  const scheduledMalformedInflight = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  scheduledMalformedInflight.tabs.QUEUE.values[1][sqh.indexOf('status')] = 'WORKING';
+  scheduledMalformedInflight.tabs.QUEUE.values[1][sqh.indexOf('claim_token')] = '';
+  scheduledMalformedInflight.tabs.QUEUE.values[1][sqh.indexOf('claim_started_at')] = '';
+  const malformedInflightResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledMalformedInflight
+  );
+  v03RuntimeAssert_(
+    !malformedInflightResult.healthy &&
+      malformedInflightResult.metrics.malformed_inflight_rows === 1,
+    'malformed inflight must fail health'
+  );
+
+  const scheduledHumanGate = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  scheduledHumanGate.tabs.QUEUE.values[1][sqh.indexOf('status')] = 'HUMAN_GATE';
+  scheduledHumanGate.tabs.QUEUE.values[1][sqh.indexOf('result_ref')] = '';
+  scheduledHumanGate.tabs.QUEUE.values[1][sqh.indexOf('completion_check')] = '';
+  scheduledHumanGate.tabs.QUEUE.values[1][sqh.indexOf('result_readback')] = '';
+  const humanGateResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledHumanGate
+  );
+  v03RuntimeAssert_(
+    !humanGateResult.healthy && humanGateResult.metrics.terminal_validation_mismatches === 1,
+    'invalid non-DONE terminal must fail health'
+  );
+
+  const scheduledUnknown = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  scheduledUnknown.tabs.QUEUE.values[1][sqh.indexOf('status')] = 'BOGUS';
+  const scheduledUnknownResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledUnknown
+  );
+  v03RuntimeAssert_(
+    !scheduledUnknownResult.healthy && scheduledUnknownResult.metrics.unknown_status_rows === 1,
+    'unknown Scheduled Work status must fail health'
+  );
+
+  const scheduledControl = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  const controlRows = scheduledControl.tabs.CONTROL.values;
+  const sourcePolicyRow = controlRows.find(row => row[0] === 'source_policy');
+  sourcePolicyRow[1] = 'WRITE_ALLOWED';
+  v03RuntimeExpectCode_(
+    () => v03EvaluateRuntimeHealthSnapshot_('SCHEDULED_WORK', scheduledControl),
+    'RUNTIME_SCHEMA_MARKER_MISMATCH',
+    'Scheduled Work CONTROL predicate drift must fail closed'
+  );
+
+  const scheduledTemplate = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  const sth = RUNTIME_HEALTH_V01.SCHEDULED_WORK.tabs.TEMPLATE_REGISTRY.headers;
+  scheduledTemplate.tabs.TEMPLATE_REGISTRY.values[1][sth.indexOf('definition_file_id')] = '';
+  const scheduledTemplateResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledTemplate
+  );
+  v03RuntimeAssert_(
+    !scheduledTemplateResult.healthy &&
+      scheduledTemplateResult.metrics.template_registry_issues === 1,
+    'Scheduled Work missing template locator must fail health'
+  );
+
+  const scheduledQueueTemplate = v03RuntimeHealthFixture_('SCHEDULED_WORK');
+  scheduledQueueTemplate.tabs.QUEUE.values[1][sqh.indexOf('template_key')] = 'UNKNOWN_TEMPLATE';
+  const scheduledQueueTemplateResult = v03EvaluateRuntimeHealthSnapshot_(
+    'SCHEDULED_WORK',
+    scheduledQueueTemplate
+  );
+  v03RuntimeAssert_(
+    !scheduledQueueTemplateResult.healthy &&
+      scheduledQueueTemplateResult.metrics.queue_template_mismatches === 1,
+    'Scheduled Work unknown queue template must fail health'
   );
 
   const siteClean = v03RuntimeHealthFixture_('SITE_RESEARCH');
@@ -854,6 +981,14 @@ function runRuntimeHealthFixtureAcceptance() {
     'Site Research DONE result/evidence gap not detected'
   );
 
+  const siteUnknown = v03RuntimeHealthFixture_('SITE_RESEARCH');
+  siteUnknown.tabs.QUEUE.values[1][2] = 'BOGUS';
+  const siteUnknownResult = v03EvaluateRuntimeHealthSnapshot_('SITE_RESEARCH', siteUnknown);
+  v03RuntimeAssert_(
+    !siteUnknownResult.healthy && siteUnknownResult.metrics.unknown_status_rows === 1,
+    'unknown Site Research status must fail health'
+  );
+
   const headerBad = v03RuntimeHealthFixture_('SCHEDULED_WORK');
   headerBad.tabs.QUEUE.values[0][0] = 'job_id_changed';
   v03RuntimeExpectCode_(
@@ -886,8 +1021,6 @@ function runRuntimeHealthFixtureAcceptance() {
     'schema marker drift must fail closed'
   );
 
-  // Failure isolation: one malformed parser source cannot turn the other source unhealthy
-  // or let the malformed source serialize as healthy.
   const isolatedScheduled = v03EvaluateRuntimeHealthSnapshot_(
     'SCHEDULED_WORK',
     v03RuntimeHealthFixture_('SCHEDULED_WORK')
@@ -903,15 +1036,158 @@ function runRuntimeHealthFixtureAcceptance() {
   v03RuntimeAssert_(isolatedScheduled.healthy, 'healthy source changed during failure-isolation fixture');
   v03RuntimeAssert_(isolatedSiteFailed, 'malformed source did not fail closed in isolation fixture');
 
+  v03RuntimeCoherenceFixtureAcceptance_();
+  v03RuntimeHealthIdentityLifecycleAcceptance_();
+
   const result = {
     status: 'PASS',
     contract: RUNTIME_HEALTH_V01.VERSION,
-    cases: 11,
+    cases: 25,
     scheduled_clean: scheduledResult.metrics,
     site_research_clean: siteResult.metrics
   };
   console.log(JSON.stringify(result));
   return result;
+}
+
+function v03RuntimeCoherenceFixtureAcceptance_() {
+  const config = RUNTIME_HEALTH_V01.SITE_RESEARCH;
+  const base = v03RuntimeHealthFixture_('SITE_RESEARCH').tabs;
+  const meta = {
+    id:config.spreadsheetId,
+    modifiedTime:'2026-10-01T00:00:00Z',
+    version:'100'
+  };
+  const clone = value => JSON.parse(JSON.stringify(value));
+
+  v03AssertRuntimeSnapshotCoherence_(config, meta, clone(base), clone(base), meta);
+
+  const appendGrowth = clone(base);
+  appendGrowth.QUEUE.lastRow++;
+  appendGrowth.QUEUE.values.push(appendGrowth.QUEUE.values[1].slice());
+  v03RuntimeExpectCode_(
+    () => v03AssertRuntimeSnapshotCoherence_(config, meta, clone(base), appendGrowth, meta),
+    'RUNTIME_SOURCE_CHANGED_DURING_READ',
+    'append growth interleaving must fail closed'
+  );
+
+  const columnGrowth = clone(base);
+  columnGrowth.QUEUE.lastColumn++;
+  columnGrowth.QUEUE.values[0].push('unexpected');
+  columnGrowth.QUEUE.values[1].push('value');
+  v03RuntimeExpectCode_(
+    () => v03AssertRuntimeSnapshotCoherence_(config, meta, clone(base), columnGrowth, meta),
+    'RUNTIME_SOURCE_CHANGED_DURING_READ',
+    'column growth interleaving must fail closed'
+  );
+
+  const sameExtent = clone(base);
+  sameExtent.QUEUE.values[1][4] = 'changed during read';
+  v03RuntimeExpectCode_(
+    () => v03AssertRuntimeSnapshotCoherence_(config, meta, clone(base), sameExtent, meta),
+    'RUNTIME_SOURCE_CHANGED_DURING_READ',
+    'same-extent content update interleaving must fail closed'
+  );
+
+  const changedMeta = Object.assign({}, meta, {
+    modifiedTime:'2026-10-01T00:00:01Z',
+    version:'101'
+  });
+  v03RuntimeExpectCode_(
+    () => v03AssertRuntimeSnapshotCoherence_(config, meta, clone(base), clone(base), changedMeta),
+    'RUNTIME_SOURCE_CHANGED_DURING_READ',
+    'source version change interleaving must fail closed'
+  );
+}
+
+function v03RuntimeHealthIdentityLifecycleAcceptance_() {
+  const config = RUNTIME_HEALTH_V01.SCHEDULED_WORK;
+  const source = {
+    source_key:'T-RHP-IDENTITY-LIFECYCLE',
+    source_kind:'SHEET_RANGE',
+    source_ref:config.spreadsheetId,
+    authority_ref:config.spreadsheetId,
+    selector:config.selector,
+    collection_mode:'STRUCTURAL_HEALTH',
+    stale_after_minutes:60,
+    expected_identity:config.expectedIdentity
+  };
+  const tx = v03RuntimeHealthFixtureTx_();
+  const successIdentity = v03BaseIdentity_(
+    source,
+    'RUNTIME_HEALTH',
+    config.selector,
+    config.spreadsheetId
+  );
+
+  v03RecordSourceFailure_(
+    tx,
+    source,
+    v03Error_('RUNTIME_SCHEMA_WIDTH_MISMATCH','fixture first failure')
+  );
+  v03RuntimeAssert_(tx.stateRows.length === 1, 'first failure must create one state row');
+  v03RuntimeAssert_(
+    tx.stateRows[0].entity_kind === 'RUNTIME_HEALTH' &&
+      tx.stateRows[0].entity_key === config.selector,
+    'first Runtime Health failure must use canonical stable identity'
+  );
+
+  v03UpsertState_(tx, successIdentity, {
+    collection_status:'SUCCESS',
+    stale_state:'FRESH',
+    mechanical_signal:'NONE',
+    stale_after_minutes:60
+  });
+  v03RuntimeAssert_(
+    tx.stateRows.length === 1 && tx.stateRows[0].collection_status === 'SUCCESS',
+    'first-failure to success recovery must preserve one canonical row'
+  );
+
+  v03RecordSourceFailure_(
+    tx,
+    source,
+    v03Error_('RUNTIME_SOURCE_CHANGED_DURING_READ','fixture later failure')
+  );
+  v03RuntimeAssert_(
+    tx.stateRows.length === 1 &&
+      tx.stateRows[0].collection_status === 'ERROR' &&
+      tx.stateRows[0].stale_state === 'UNKNOWN',
+    'prior-success to failure must preserve canonical row and fail closed'
+  );
+
+  v03UpsertState_(tx, successIdentity, {
+    collection_status:'SUCCESS',
+    stale_state:'FRESH',
+    mechanical_signal:'NONE',
+    stale_after_minutes:60
+  });
+  v03RuntimeAssert_(
+    tx.stateRows.length === 1 &&
+      tx.stateRows[0].collection_status === 'SUCCESS' &&
+      tx.stateRows[0].entity_kind === 'RUNTIME_HEALTH' &&
+      tx.stateRows[0].entity_key === config.selector,
+    'prior-success to failure to success recovery must remain recoverable'
+  );
+}
+
+function v03RuntimeHealthFixtureTx_() {
+  return {
+    stateHeader:[
+      'state_key','source_key','entity_kind','entity_key','source_ref','authority_ref',
+      'observed_name','observed_mime_type','observed_modified_at','source_version_signal',
+      'collected_at','collection_status','last_collection_success_at','last_collection_error_at',
+      'last_collection_error_code','last_collection_error','stale_after_minutes','stale_state',
+      'mechanical_signal','mechanical_signal_detail','judge_status'
+    ],
+    stateRows:[],
+    dirtyCells:new Map(),
+    newStateRows:[],
+    stateSheetId:0,
+    runSheetId:0,
+    runHeader:[],
+    runAppend:null,
+    spreadsheetId:'TEST'
+  };
 }
 
 function runRuntimeHealthDevReadAcceptance() {
@@ -1072,6 +1348,11 @@ function v03RuntimeHealthFixture_(runtimeKey) {
     template[t.indexOf('template_key')] = 'WORKER_HEALTH';
     template[t.indexOf('template_version')] = 'v0.1';
     template[t.indexOf('status')] = 'CANDIDATE';
+    template[t.indexOf('definition_file_id')] = 'FIXTURE-DEFINITION-ID';
+    template[t.indexOf('required_terminal_fields')] =
+      'job_id|template_key|template_version|attempt_no|claim_token|completion_check|result_readback';
+    template[t.indexOf('source_freshness_rule')] = 'fresh fixture source every attempt';
+    template[t.indexOf('output_store_ref')] = 'FIXTURE_STORE';
     tabs.TEMPLATE_REGISTRY.values.push(template);
     tabs.TEMPLATE_REGISTRY.lastRow++;
 
