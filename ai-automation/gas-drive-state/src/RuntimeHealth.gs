@@ -449,65 +449,222 @@ function v03ValidateRuntimeControlExpectations_(runtimeKey, controlSnapshot, con
 
 function v03EvaluateScheduledWorkHealth_(snapshot) {
   const queue = v03RuntimeRowsAsObjects_(snapshot.tabs.QUEUE);
+  const templates = v03RuntimeRowsAsObjects_(snapshot.tabs.TEMPLATE_REGISTRY);
+  const allowedStatuses = new Set([
+    'READY','PARTIAL','WORKING','VERIFYING',
+    'DONE','HUMAN_GATE','BLOCKED_SAFE','CANCELLED'
+  ]);
+  const inflightStatuses = new Set(['WORKING','VERIFYING']);
+  const terminalStatuses = new Set(['DONE','HUMAN_GATE','BLOCKED_SAFE','CANCELLED']);
+
   const duplicateJobIds = v03RuntimeDuplicateValues_(queue, 'job_id');
-  const duplicateDedupeKeys = v03RuntimeDuplicateValues_(queue, 'dedupe_key');
+  const duplicateDedupeKeys = v03RuntimeDuplicateValues_(
+    queue.filter(row => String(row.status || '').trim() !== 'CANCELLED'),
+    'dedupe_key'
+  );
   const invalidRows = [];
-  const terminalReadbackMismatches = [];
-  let inflightCount = 0;
+  const invalidStatuses = [];
+  const malformedInflight = [];
+  const terminalValidationMismatches = [];
+  const queueTemplateMismatches = [];
+  const inflightRows = [];
+
+  const templateEvaluation = v03EvaluateScheduledTemplateRegistry_(templates);
+  const validTemplateKeys = templateEvaluation.validTemplateKeys;
 
   queue.forEach((row, index) => {
-    const rowNo = index + 2;
+    const rowNo = Number(row.__row || (index + 2));
     const jobId = String(row.job_id || '').trim();
     const dedupeKey = String(row.dedupe_key || '').trim();
+    const templateKey = String(row.template_key || '').trim();
+    const templateVersion = String(row.template_version || '').trim();
     const status = String(row.status || '').trim();
-    if (!jobId || !dedupeKey || !status) {
+
+    if (!jobId || !dedupeKey || !status || !templateKey || !templateVersion) {
       invalidRows.push({
         row: rowNo,
-        reason: !jobId ? 'MISSING_JOB_ID' : (!dedupeKey ? 'MISSING_DEDUPE_KEY' : 'MISSING_STATUS')
+        reason: !jobId ? 'MISSING_JOB_ID' :
+          (!dedupeKey ? 'MISSING_DEDUPE_KEY' :
+            (!status ? 'MISSING_STATUS' :
+              (!templateKey ? 'MISSING_TEMPLATE_KEY' : 'MISSING_TEMPLATE_VERSION')))
       });
     }
-    if (['CLAIMED','RUNNING','WORKING'].includes(status)) inflightCount++;
 
-    if (status === 'DONE') {
-      const resultRef = String(row.result_ref || '').trim();
-      const completion = String(row.completion_check || '').trim();
-      const readback = String(row.result_readback || '').trim();
-      if (!resultRef || completion !== 'PASS' || readback !== 'PASS') {
-        terminalReadbackMismatches.push({
-          row: rowNo,
-          job_id: jobId,
-          result_ref_present: Boolean(resultRef),
-          completion_check: completion,
-          result_readback: readback
+    if (status && !allowedStatuses.has(status)) {
+      invalidStatuses.push({row:rowNo, job_id:jobId, status:status});
+    }
+
+    if (templateKey && templateVersion &&
+        !validTemplateKeys.has(templateKey + '|' + templateVersion)) {
+      queueTemplateMismatches.push({
+        row:rowNo,
+        job_id:jobId,
+        template_key:templateKey,
+        template_version:templateVersion
+      });
+    }
+
+    if (inflightStatuses.has(status)) {
+      inflightRows.push({row:rowNo, job_id:jobId, status:status});
+      const missing = [];
+      if (!v03RuntimePositiveInteger_(row.attempt_no)) missing.push('attempt_no');
+      if (!String(row.claim_token || '').trim()) missing.push('claim_token');
+      if (!String(row.claim_started_at || '').trim()) missing.push('claim_started_at');
+      if (status === 'VERIFYING' && !String(row.result_ref || '').trim()) {
+        missing.push('result_ref');
+      }
+      if (missing.length) {
+        malformedInflight.push({
+          row:rowNo,
+          job_id:jobId,
+          status:status,
+          missing_fields:missing
         });
       }
     }
+
+    if (terminalStatuses.has(status)) {
+      const issue = v03ScheduledTerminalValidationIssue_(row, rowNo, jobId, status);
+      if (issue) terminalValidationMismatches.push(issue);
+    }
   });
 
+  const concurrentInflight = inflightRows.length > 1 ? inflightRows : [];
   const issues = [];
   v03RuntimePushIssue_(issues, 'DUPLICATE_JOB_ID', duplicateJobIds);
-  v03RuntimePushIssue_(issues, 'DUPLICATE_DEDUPE_KEY', duplicateDedupeKeys);
+  v03RuntimePushIssue_(issues, 'DUPLICATE_DEDUPE_KEY_NONCANCELLED', duplicateDedupeKeys);
   v03RuntimePushIssue_(issues, 'INVALID_QUEUE_ROW', invalidRows);
-  v03RuntimePushIssue_(issues, 'TERMINAL_READBACK_MISMATCH', terminalReadbackMismatches);
+  v03RuntimePushIssue_(issues, 'UNKNOWN_QUEUE_STATUS', invalidStatuses);
+  v03RuntimePushIssue_(issues, 'MALFORMED_INFLIGHT', malformedInflight);
+  v03RuntimePushIssue_(issues, 'INFLIGHT_CONCURRENCY_MISMATCH', concurrentInflight);
+  v03RuntimePushIssue_(issues, 'TERMINAL_VALIDATION_MISMATCH', terminalValidationMismatches);
+  v03RuntimePushIssue_(issues, 'QUEUE_TEMPLATE_MISMATCH', queueTemplateMismatches);
+  v03RuntimePushIssue_(issues, 'TEMPLATE_REGISTRY_INVALID', templateEvaluation.issues);
 
   return v03RuntimeFinalizeEvaluation_({
     metrics: {
       queue_rows: queue.length,
       duplicate_job_ids: duplicateJobIds.length,
-      duplicate_dedupe_keys: duplicateDedupeKeys.length,
-      inflight_count: inflightCount,
-      terminal_readback_mismatches: terminalReadbackMismatches.length,
-      invalid_queue_rows: invalidRows.length
+      duplicate_dedupe_keys_noncancelled: duplicateDedupeKeys.length,
+      inflight_count: inflightRows.length,
+      malformed_inflight_rows: malformedInflight.length,
+      concurrent_inflight_rows: concurrentInflight.length,
+      terminal_validation_mismatches: terminalValidationMismatches.length,
+      invalid_queue_rows: invalidRows.length,
+      unknown_status_rows: invalidStatuses.length,
+      queue_template_mismatches: queueTemplateMismatches.length,
+      template_registry_issues: templateEvaluation.issues.length
     },
     issues: issues
   });
+}
+
+function v03EvaluateScheduledTemplateRegistry_(templates) {
+  const allowedStatuses = new Set(['CANDIDATE','STABLE']);
+  const requiredTerminalMarkers = ['attempt_no','claim_token','completion_check','result_readback'];
+  const counts = {};
+  const issues = [];
+  const validTemplateKeys = new Set();
+
+  templates.forEach((row, index) => {
+    const rowNo = Number(row.__row || (index + 2));
+    const key = String(row.template_key || '').trim();
+    const version = String(row.template_version || '').trim();
+    const status = String(row.status || '').trim();
+    const definitionFileId = String(row.definition_file_id || '').trim();
+    const terminalFields = String(row.required_terminal_fields || '').trim();
+    const freshnessRule = String(row.source_freshness_rule || '').trim();
+    const outputStoreRef = String(row.output_store_ref || '').trim();
+    const identity = key && version ? key + '|' + version : '';
+
+    if (identity) counts[identity] = (counts[identity] || 0) + 1;
+
+    const missing = [];
+    if (!key) missing.push('template_key');
+    if (!version) missing.push('template_version');
+    if (!status) missing.push('status');
+    if (!definitionFileId) missing.push('definition_file_id');
+    if (!terminalFields) missing.push('required_terminal_fields');
+    if (!freshnessRule) missing.push('source_freshness_rule');
+    if (!outputStoreRef) missing.push('output_store_ref');
+    if (missing.length) {
+      issues.push({row:rowNo, reason:'MISSING_REQUIRED_TEMPLATE_FIELD', missing_fields:missing});
+      return;
+    }
+
+    if (!allowedStatuses.has(status)) {
+      issues.push({row:rowNo, reason:'INVALID_TEMPLATE_STATUS', status:status});
+      return;
+    }
+
+    const terminalSet = new Set(terminalFields.split('|').map(x => x.trim()).filter(Boolean));
+    const missingMarkers = requiredTerminalMarkers.filter(field => !terminalSet.has(field));
+    if (missingMarkers.length) {
+      issues.push({
+        row:rowNo,
+        reason:'REQUIRED_TERMINAL_FIELD_MARKER_MISSING',
+        template_key:key,
+        template_version:version,
+        missing_fields:missingMarkers
+      });
+      return;
+    }
+
+    validTemplateKeys.add(identity);
+  });
+
+  Object.keys(counts).filter(identity => counts[identity] > 1).sort().forEach(identity => {
+    issues.push({reason:'DUPLICATE_TEMPLATE_IDENTITY', identity:identity, count:counts[identity]});
+    validTemplateKeys.delete(identity);
+  });
+
+  return {issues:issues, validTemplateKeys:validTemplateKeys};
+}
+
+function v03ScheduledTerminalValidationIssue_(row, rowNo, jobId, status) {
+  const attemptNo = String(row.attempt_no || '').trim();
+  const claimToken = String(row.claim_token || '').trim();
+  const resultRef = String(row.result_ref || '').trim();
+  const completion = String(row.completion_check || '').trim();
+  const readback = String(row.result_readback || '').trim();
+
+  const cleanPreRunCancelled = status === 'CANCELLED' &&
+    !attemptNo && !claimToken && !resultRef && !completion && !readback;
+  if (cleanPreRunCancelled) return null;
+
+  const problems = [];
+  if (!v03RuntimePositiveInteger_(attemptNo)) problems.push('attempt_no');
+  if (!claimToken) problems.push('claim_token');
+  if (!resultRef) problems.push('result_ref');
+  if (completion !== 'PASS') problems.push('completion_check');
+  if (readback !== 'PASS') problems.push('result_readback');
+
+  if (!problems.length) return null;
+  return {
+    row:rowNo,
+    job_id:jobId,
+    status:status,
+    invalid_or_missing_fields:problems,
+    completion_check:completion,
+    result_readback:readback
+  };
+}
+
+function v03RuntimePositiveInteger_(value) {
+  const raw = String(value === undefined || value === null ? '' : value).trim();
+  if (!/^\d+$/.test(raw)) return false;
+  return Number(raw) >= 1;
 }
 
 function v03EvaluateSiteResearchHealth_(snapshot) {
   const queue = v03RuntimeRowsAsObjects_(snapshot.tabs.QUEUE);
   const duplicateItemIds = v03RuntimeDuplicateValues_(queue, 'item_id');
   const duplicateQueueOrders = v03RuntimeDuplicateValues_(queue, 'queue_order');
+  const allowedStatuses = new Set([
+    'CANDIDATE','READY','RUNNING','WORKING','DONE','BLOCKED'
+  ]);
   const invalidRows = [];
+  const invalidStatuses = [];
   const readyGaps = [];
   const doneGaps = [];
   const workingRows = [];
@@ -518,7 +675,7 @@ function v03EvaluateSiteResearchHealth_(snapshot) {
   ];
 
   queue.forEach((row, index) => {
-    const rowNo = index + 2;
+    const rowNo = Number(row.__row || (index + 2));
     const itemId = String(row.item_id || '').trim();
     const queueOrder = String(row.queue_order || '').trim();
     const status = String(row.status || '').trim();
@@ -530,8 +687,12 @@ function v03EvaluateSiteResearchHealth_(snapshot) {
       });
     }
 
-    if (status === 'WORKING') {
-      workingRows.push({row:rowNo, item_id:itemId});
+    if (status && !allowedStatuses.has(status)) {
+      invalidStatuses.push({row:rowNo, item_id:itemId, status:status});
+    }
+
+    if (status === 'WORKING' || status === 'RUNNING') {
+      workingRows.push({row:rowNo, item_id:itemId, status:status});
     }
 
     if (status === 'READY') {
@@ -555,6 +716,7 @@ function v03EvaluateSiteResearchHealth_(snapshot) {
   v03RuntimePushIssue_(issues, 'DUPLICATE_ITEM_ID', duplicateItemIds);
   v03RuntimePushIssue_(issues, 'DUPLICATE_QUEUE_ORDER', duplicateQueueOrders);
   v03RuntimePushIssue_(issues, 'INVALID_QUEUE_ROW', invalidRows);
+  v03RuntimePushIssue_(issues, 'UNKNOWN_QUEUE_STATUS', invalidStatuses);
   v03RuntimePushIssue_(issues, 'WORKING_CONCURRENCY_MISMATCH', workingMismatch);
   v03RuntimePushIssue_(issues, 'READY_REQUIRED_FIELD_GAP', readyGaps);
   v03RuntimePushIssue_(issues, 'DONE_RESULT_EVIDENCE_GAP', doneGaps);
@@ -567,7 +729,8 @@ function v03EvaluateSiteResearchHealth_(snapshot) {
       working_count: workingRows.length,
       ready_required_field_gaps: readyGaps.length,
       done_result_evidence_gaps: doneGaps.length,
-      invalid_queue_rows: invalidRows.length
+      invalid_queue_rows: invalidRows.length,
+      unknown_status_rows: invalidStatuses.length
     },
     issues: issues
   });
@@ -577,15 +740,18 @@ function v03RuntimeRowsAsObjects_(tabSnapshot) {
   const values = tabSnapshot.values || [];
   if (!values.length) return [];
   const headers = values[0].map(v => String(v || '').trim());
-  return values.slice(1).filter(row =>
-    row.some(value => String(value === undefined ? '' : value).trim() !== '')
-  ).map(row => {
-    const obj = {};
-    headers.forEach((header, index) => {
-      obj[header] = row[index] === undefined ? '' : row[index];
+  return values.slice(1)
+    .map((row, index) => ({row:row, physicalRow:index + 2}))
+    .filter(entry =>
+      entry.row.some(value => String(value === undefined ? '' : value).trim() !== '')
+    )
+    .map(entry => {
+      const obj = {__row:entry.physicalRow};
+      headers.forEach((header, index) => {
+        obj[header] = entry.row[index] === undefined ? '' : entry.row[index];
+      });
+      return obj;
     });
-    return obj;
-  });
 }
 
 function v03RuntimeDuplicateValues_(rows, field) {
