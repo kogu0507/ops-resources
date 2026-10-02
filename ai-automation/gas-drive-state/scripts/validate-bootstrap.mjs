@@ -99,7 +99,9 @@ if (!runtimeHealth.includes('RUNTIME_HEADER_MISMATCH')) throw new Error('Runtime
 if (!runtimeHealth.includes('RUNTIME_SCHEMA_MARKER_MISMATCH')) throw new Error('Runtime schema-marker fail-close missing');
 if (!runtimeHealth.includes('RUNTIME_ROW_LIMIT')) throw new Error('Runtime row-overflow fail-close missing');
 if (!runtimeHealth.includes('RUNTIME_SOURCE_CHANGED_DURING_READ')) throw new Error('Runtime concurrent-change coherence fail-close missing');
-if (!runtimeHealth.includes('runtime-health-pack-v0.1.1')) throw new Error('Runtime Health review-fix version marker missing');
+if (!runtimeHealth.includes('monotonic Drive version missing')) throw new Error('Runtime missing monotonic-version fail-close missing');
+if (!runtimeHealth.includes('RUNTIME_SOURCE_IDENTITY_MISMATCH')) throw new Error('Runtime source identity coherence guard missing');
+if (!runtimeHealth.includes('runtime-health-pack-v0.1.2')) throw new Error('Runtime Health residual A2 version-guard marker missing');
 if (!runtimeHealth.includes("'VERIFYING'")) throw new Error('Scheduled Work VERIFYING inflight coverage missing');
 if (!runtimeHealth.includes('TERMINAL_VALIDATION_MISMATCH')) throw new Error('Scheduled Work terminal validation issue missing');
 if (!runtimeHealth.includes('TEMPLATE_REGISTRY_INVALID')) throw new Error('Scheduled Work template registry validation missing');
@@ -212,8 +214,115 @@ if (/\.setValue\s*\(|\.setValues\s*\(|appendRow\s*\(|deleteRow\s*\(|Sheets\.Spre
 
   context.requireDevRuntimeForTestMutation_ = () => true;
   const fullAcceptance = context.runRuntimeHealthFixtureAcceptance();
-  if (!fullAcceptance || fullAcceptance.status !== 'PASS' || fullAcceptance.cases < 25) {
-    throw new Error('Runtime Health full review-regression fixture acceptance failed');
+  if (!fullAcceptance || fullAcceptance.status !== 'PASS' || fullAcceptance.cases < 28) {
+    throw new Error('Runtime Health full residual-A2 regression fixture acceptance failed');
+  }
+
+  const readerConfig = context.v03RuntimeHealthConfigByKey_('SITE_RESEARCH');
+  const readerBase = context.v03RuntimeHealthFixture_('SITE_RESEARCH').tabs;
+  const clone = value => JSON.parse(JSON.stringify(value));
+
+  function makeReaderSpreadsheet(options = {}) {
+    const tabs = clone(readerBase);
+    let queueContentReads = 0;
+    return {
+      getSheetByName(tabName) {
+        if (!tabs[tabName]) return null;
+        return {
+          getLastRow() {
+            return tabs[tabName].lastRow;
+          },
+          getLastColumn() {
+            return tabs[tabName].lastColumn;
+          },
+          getRange(startRow, startColumn, rowCount, columnCount) {
+            if (startRow !== 1 || startColumn !== 1) {
+              throw new Error('reader regression expected bounded reads from A1 only');
+            }
+            return {
+              getDisplayValues() {
+                if (tabName === 'QUEUE') {
+                  queueContentReads += 1;
+                  if (options.lateAppendOnSecondQueueRead && queueContentReads === 2) {
+                    const appended = tabs.QUEUE.values[1].slice();
+                    appended[0] = 'R-LATE-APPEND';
+                    appended[1] = '999';
+                    appended[2] = 'READY';
+                    tabs.QUEUE.values.push(appended);
+                    tabs.QUEUE.lastRow += 1;
+                  }
+                }
+                return tabs[tabName].values
+                  .slice(0, rowCount)
+                  .map(row => row.slice(0, columnCount));
+              }
+            };
+          }
+        };
+      }
+    };
+  }
+
+  context.SpreadsheetApp = {
+    openById(id) {
+      if (id !== readerConfig.spreadsheetId) throw new Error('unexpected reader spreadsheet id');
+      return makeReaderSpreadsheet();
+    }
+  };
+  context.Drive = {
+    Files: {
+      get(id) {
+        return {
+          id,
+          modifiedTime:'2026-10-03T00:00:00Z',
+          version:'200'
+        };
+      }
+    }
+  };
+  const stableReader = context.v03ReadRuntimeHealthSnapshot_(
+    readerConfig,
+    {
+      id:readerConfig.spreadsheetId,
+      modifiedTime:'2026-10-03T00:00:00Z',
+      version:'200'
+    }
+  );
+  if (!stableReader || !String(stableReader.sourceVersionToken || '').includes('|version=200')) {
+    throw new Error('Runtime reader stable monotonic-version fixture failed');
+  }
+
+  const lateAppendSheet = makeReaderSpreadsheet({lateAppendOnSecondQueueRead:true});
+  context.SpreadsheetApp = {
+    openById(id) {
+      if (id !== readerConfig.spreadsheetId) throw new Error('unexpected late-append spreadsheet id');
+      return lateAppendSheet;
+    }
+  };
+  context.Drive = {
+    Files: {
+      get(id) {
+        return {
+          id,
+          modifiedTime:'2026-10-03T00:00:00Z'
+        };
+      }
+    }
+  };
+  let missingVersionClosed = false;
+  try {
+    context.v03ReadRuntimeHealthSnapshot_(
+      readerConfig,
+      {
+        id:readerConfig.spreadsheetId,
+        modifiedTime:'2026-10-03T00:00:00Z'
+      }
+    );
+  } catch (e) {
+    missingVersionClosed = Boolean(e && e.v03code === 'RUNTIME_COHERENCE_EVIDENCE_MISSING');
+  }
+  if (!missingVersionClosed) {
+    throw new Error('Runtime reader late-second-read append with missing version did not fail closed');
   }
 }
 
