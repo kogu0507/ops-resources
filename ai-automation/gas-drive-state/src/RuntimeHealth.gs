@@ -7,7 +7,7 @@
  * - incomplete/unknown coverage must never serialize as healthy.
  */
 const RUNTIME_HEALTH_V01 = Object.freeze({
-  VERSION: 'runtime-health-pack-v0.1.1',
+  VERSION: 'runtime-health-pack-v0.1.2',
   MAX_ISSUES: 20,
   SCHEDULED_WORK: Object.freeze({
     runtimeKey: 'SCHEDULED_WORK',
@@ -275,16 +275,12 @@ function v03ReadRuntimeTabsOnce_(ss, config, previousTabs) {
 }
 
 function v03AssertRuntimeSnapshotCoherence_(config, beforeMeta, firstTabs, secondTabs, afterMeta) {
-  if (!beforeMeta || !afterMeta) {
-    throw v03Error_(
-      'RUNTIME_COHERENCE_EVIDENCE_MISSING',
-      config.runtimeKey + ' source metadata fence missing'
-    );
-  }
+  v03AssertRuntimeMetadataEvidence_(config, beforeMeta, 'before');
+  v03AssertRuntimeMetadataEvidence_(config, afterMeta, 'after');
 
   const beforeToken = v03RuntimeSourceVersionToken_(beforeMeta);
   const afterToken = v03RuntimeSourceVersionToken_(afterMeta);
-  if (!beforeToken || !afterToken || beforeToken !== afterToken) {
+  if (beforeToken !== afterToken) {
     throw v03Error_(
       'RUNTIME_SOURCE_CHANGED_DURING_READ',
       config.runtimeKey + ' source version/modifiedTime changed during bounded snapshot'
@@ -316,12 +312,38 @@ function v03AssertRuntimeSnapshotCoherence_(config, beforeMeta, firstTabs, secon
   });
 }
 
+function v03AssertRuntimeMetadataEvidence_(config, meta, phase) {
+  if (!meta) {
+    throw v03Error_(
+      'RUNTIME_COHERENCE_EVIDENCE_MISSING',
+      config.runtimeKey + ' ' + phase + ' source metadata fence missing'
+    );
+  }
+
+  const id = String(meta.id || '').trim();
+  const expectedId = String(config.spreadsheetId || '').trim();
+  if (!id || id !== expectedId) {
+    throw v03Error_(
+      'RUNTIME_SOURCE_IDENTITY_MISMATCH',
+      config.runtimeKey + ' ' + phase + ' source id mismatch'
+    );
+  }
+
+  const version = String(meta.version || '').trim();
+  if (!version) {
+    throw v03Error_(
+      'RUNTIME_COHERENCE_EVIDENCE_MISSING',
+      config.runtimeKey + ' ' + phase + ' monotonic Drive version missing'
+    );
+  }
+}
+
 function v03RuntimeSourceVersionToken_(meta) {
   if (!meta) return '';
-  const id = String(meta.id || '');
-  const modified = String(meta.modifiedTime || '');
-  const version = String(meta.version || '');
-  if (!id || (!modified && !version)) return '';
+  const id = String(meta.id || '').trim();
+  const modified = String(meta.modifiedTime || '').trim();
+  const version = String(meta.version || '').trim();
+  if (!id || !version) return '';
   return id + '|modified=' + modified + '|version=' + version;
 }
 
@@ -1042,7 +1064,7 @@ function runRuntimeHealthFixtureAcceptance() {
   const result = {
     status: 'PASS',
     contract: RUNTIME_HEALTH_V01.VERSION,
-    cases: 25,
+    cases: 28,
     scheduled_clean: scheduledResult.metrics,
     site_research_clean: siteResult.metrics
   };
@@ -1097,6 +1119,41 @@ function v03RuntimeCoherenceFixtureAcceptance_() {
     () => v03AssertRuntimeSnapshotCoherence_(config, meta, clone(base), clone(base), changedMeta),
     'RUNTIME_SOURCE_CHANGED_DURING_READ',
     'source version change interleaving must fail closed'
+  );
+
+  const missingBeforeVersion = Object.assign({}, meta);
+  delete missingBeforeVersion.version;
+  v03RuntimeExpectCode_(
+    () => v03AssertRuntimeSnapshotCoherence_(
+      config,
+      missingBeforeVersion,
+      clone(base),
+      clone(base),
+      meta
+    ),
+    'RUNTIME_COHERENCE_EVIDENCE_MISSING',
+    'missing before monotonic version must fail closed'
+  );
+
+  const missingAfterVersion = Object.assign({}, meta);
+  delete missingAfterVersion.version;
+  v03RuntimeExpectCode_(
+    () => v03AssertRuntimeSnapshotCoherence_(
+      config,
+      meta,
+      clone(base),
+      clone(base),
+      missingAfterVersion
+    ),
+    'RUNTIME_COHERENCE_EVIDENCE_MISSING',
+    'missing after monotonic version must fail closed'
+  );
+
+  const wrongId = Object.assign({}, meta, {id:'WRONG-RUNTIME-ID'});
+  v03RuntimeExpectCode_(
+    () => v03AssertRuntimeSnapshotCoherence_(config, wrongId, clone(base), clone(base), meta),
+    'RUNTIME_SOURCE_IDENTITY_MISMATCH',
+    'wrong source id must fail closed'
   );
 }
 
