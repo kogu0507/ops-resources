@@ -206,7 +206,7 @@ function runDevCommandQueueTick() {
 
     let result;
     try {
-      result = devCommandExecuteAllowed_(action);
+      result = devCommandExecuteAllowed_(action, commandId);
       const finishedAt = new Date().toISOString();
       sheet.getRange(selected.rowNumber, 4).setValue('DONE');
       sheet.getRange(selected.rowNumber, 6, 1, 2)
@@ -236,7 +236,7 @@ function runDevCommandQueueTick() {
   }
 }
 
-function devCommandExecuteAllowed_(action) {
+function devCommandExecuteAllowed_(action, commandId) {
   switch (action) {
     case 'CI_CD_SMOKE':
       return ciCdSmoke();
@@ -250,6 +250,12 @@ function devCommandExecuteAllowed_(action) {
       return runRuntimeHealthFixtureAcceptance();
     case 'RUNTIME_HEALTH_DEV_READ_ACCEPTANCE':
       return runRuntimeHealthDevReadAcceptance();
+    case 'RUNTIME_HEALTH_CACHE_CAPTURE':
+      return runRuntimeHealthCacheCapture(commandId);
+    case 'RUNTIME_HEALTH_CONSUMER_DEV_PROOF':
+      return runRuntimeHealthConsumerDevProof(commandId);
+    case 'RUNTIME_HEALTH_CONSUMER_FIXTURE_ACCEPTANCE':
+      return runRuntimeHealthConsumerFixtureAcceptance();
     default:
       throw new Error('DEV_COMMAND_ACTION_NOT_ALLOWED: ' + action);
   }

@@ -213,6 +213,92 @@ if (/\.setValue\s*\(|\.setValues\s*\(|appendRow\s*\(|deleteRow\s*\(|Sheets\.Spre
   if (!headerClosed) throw new Error('Runtime Health header drift did not fail closed');
 
   context.requireDevRuntimeForTestMutation_ = () => true;
+  const consumerAcceptance = context.runRuntimeHealthConsumerFixtureAcceptance();
+  if (!consumerAcceptance || consumerAcceptance.status !== 'PASS' || consumerAcceptance.cases < 54) {
+    throw new Error('DEV consumer validity matrix acceptance failed');
+  }
+  // Consumer integration: real read boundary, version race and expiry after the fence.
+  // Mocks supply metadata only; any attempted covered source read is counted.
+  {
+    const config = context.v03RuntimeHealthConfigByKey_('SITE_RESEARCH');
+    const snapshot = context.v03RuntimeHealthFixture_('SITE_RESEARCH');
+    const observedAt = new Date().toISOString();
+    const meta = {
+      id:config.spreadsheetId, name:config.expectedIdentity,
+      mimeType:'application/vnd.google-apps.spreadsheet',
+      modifiedTime:observedAt, version:'123'
+    };
+    snapshot.sourceVersionToken = context.v03RuntimeSourceVersionToken_(meta);
+    const envelope = context.devHealthEnvelope_(
+      config, snapshot, context.v03EvaluateRuntimeHealthSnapshot_('SITE_RESEARCH',snapshot),
+      'INTEGRATION-CAPTURE', observedAt
+    );
+    const originalSnapshotRead = context.v03ReadRuntimeHealthSnapshot_;
+    let rawReads = 0;
+    context.v03ReadRuntimeHealthSnapshot_ = () => {rawReads++; return snapshot;};
+    context.Drive = {Files:{get:() => meta}};
+    const fast = context.devHealthConsumeOne_(config,envelope,'INTEGRATION-CAPTURE');
+    if (fast.path !== 'SKIP' || rawReads !== 0 || fast.read_evidence.drive_metadata_reads !== 2) {
+      throw new Error('DEV consumer fast path did not preserve the raw-read boundary');
+    }
+    let calls = 0;
+    context.Drive.Files.get = () => (++calls === 2 ? {...meta,version:'124'} : meta);
+    const race = context.devHealthConsumeOne_(config,envelope,'INTEGRATION-CAPTURE');
+    if (race.path !== 'FALLBACK' || race.reason !== 'SOURCE_CHANGED_DURING_VALIDATION' || rawReads !== 1) {
+      throw new Error('DEV consumer version race did not perform bounded source fallback');
+    }
+    context.Drive.Files.get = () => meta;
+    const stale = {...envelope,observed_at:new Date(Date.now()-300001).toISOString()};
+    const staleResult = context.devHealthConsumeOne_(config,stale,'INTEGRATION-CAPTURE');
+    if (staleResult.path !== 'FALLBACK' || staleResult.reason !== 'STALE' || rawReads !== 2) {
+      throw new Error('DEV consumer stale evidence did not perform source fallback');
+    }
+    const unknown = {...envelope,source_version_token:''};
+    const unknownResult = context.devHealthConsumeOne_(config,unknown,'INTEGRATION-CAPTURE');
+    if (unknownResult.path !== 'FALLBACK' || rawReads !== 3) {
+      throw new Error('DEV consumer missing source version did not perform fallback');
+    }
+    const RealDate = Date;
+    let clock = Date.parse(observedAt);
+    context.Date = class extends RealDate {static now() {return clock;}};
+    calls = 0;
+    context.Drive.Files.get = () => {
+      if (++calls === 2) clock += 300001;
+      return meta;
+    };
+    const expiryRace = context.devHealthConsumeOne_(config,envelope,'INTEGRATION-CAPTURE');
+    if (expiryRace.path !== 'FALLBACK' || expiryRace.reason !== 'STALE' || rawReads !== 4) {
+      throw new Error('DEV consumer expiry during metadata fence did not fail closed');
+    }
+    context.Date = RealDate;
+    context.Drive.Files.get = () => {throw new Error('metadata unavailable');};
+    const unavailable = context.devHealthConsumeOne_(config,envelope,'INTEGRATION-CAPTURE');
+    if (unavailable.path !== 'FALLBACK' || unavailable.fallback.status !== 'FAIL_CLOSED' ||
+        unavailable.fallback.error_code !== 'CONSUMER_SOURCE_METADATA_UNAVAILABLE') {
+      throw new Error('DEV consumer inaccessible source did not terminalize fail closed');
+    }
+    context.Drive.Files.get = id => {
+      if (id !== config.spreadsheetId) throw new Error('one source unavailable');
+      return meta;
+    };
+    const isolated = context.runRuntimeHealthCacheCapture('INTEGRATION-CAPTURE');
+    if (isolated.observations.SCHEDULED_WORK.status !== 'FAIL_CLOSED' ||
+        isolated.observations.SITE_RESEARCH.status !== 'COLLECTED') {
+      throw new Error('DEV consumer source-local failure suppressed the other source');
+    }
+    context.Drive.Files.get = () => meta;
+    const scheduledConfig = context.v03RuntimeHealthConfigByKey_('SCHEDULED_WORK');
+    const scheduledSnapshot = context.v03RuntimeHealthFixture_('SCHEDULED_WORK');
+    scheduledSnapshot.sourceVersionToken = scheduledConfig.spreadsheetId + '|modified=' + observedAt + '|version=123';
+    const scheduledHealth = context.v03EvaluateRuntimeHealthSnapshot_('SCHEDULED_WORK',scheduledSnapshot);
+    scheduledHealth.metrics.inflight_count = 1;
+    const scheduledEnvelope = context.devHealthEnvelope_(
+      scheduledConfig,scheduledSnapshot,scheduledHealth,'INTEGRATION-CAPTURE',observedAt);
+    if (context.devHealthValidity_(scheduledConfig,scheduledEnvelope,Date.now(),'INTEGRATION-CAPTURE').decision !== 'ELIGIBLE') {
+      throw new Error('DEV consumer silently tightened M1 valid single-inflight health');
+    }
+    context.v03ReadRuntimeHealthSnapshot_ = originalSnapshotRead;
+  }
   const fullAcceptance = context.runRuntimeHealthFixtureAcceptance();
   if (!fullAcceptance || fullAcceptance.status !== 'PASS' || fullAcceptance.cases < 28) {
     throw new Error('Runtime Health full residual-A2 regression fixture acceptance failed');
@@ -368,8 +454,14 @@ for (const entrypoint of ['getDevCommandRunnerPreflight','installDevCommandRunne
   const body = devCommandRunner.slice(start, start + 500);
   if (!body.includes('requireDevRuntimeForTestMutation_();')) throw new Error(`Dev runtime guard missing at entrypoint: ${entrypoint}`);
 }
-for (const action of ['CI_CD_SMOKE','COLLECTOR_V03_ACCEPTANCE','OPERATIONS_BOARD_HEALTH_READ_ACCEPTANCE','OPERATIONS_BOARD_UNCHANGED_DEDUP_ACCEPTANCE','RUNTIME_HEALTH_FIXTURE_ACCEPTANCE','RUNTIME_HEALTH_DEV_READ_ACCEPTANCE']) {
+for (const action of ['CI_CD_SMOKE','COLLECTOR_V03_ACCEPTANCE','OPERATIONS_BOARD_HEALTH_READ_ACCEPTANCE','OPERATIONS_BOARD_UNCHANGED_DEDUP_ACCEPTANCE','RUNTIME_HEALTH_FIXTURE_ACCEPTANCE','RUNTIME_HEALTH_DEV_READ_ACCEPTANCE','RUNTIME_HEALTH_CACHE_CAPTURE','RUNTIME_HEALTH_CONSUMER_DEV_PROOF','RUNTIME_HEALTH_CONSUMER_FIXTURE_ACCEPTANCE']) {
   if (!devCommandRunner.includes(`case '${action}'`)) throw new Error(`Dev command allowlist action missing: ${action}`);
+}
+for (const entrypoint of ['runRuntimeHealthCacheCapture','runRuntimeHealthConsumerDevProof','runRuntimeHealthConsumerFixtureAcceptance']) {
+  const start = runtimeHealth.indexOf(`function ${entrypoint}(`);
+  if (start < 0 || !runtimeHealth.slice(start,start+300).includes('requireDevRuntimeForTestMutation_();')) {
+    throw new Error(`Consumer exact DEV guard missing: ${entrypoint}`);
+  }
 }
 if (!devCommandRunner.includes("throw new Error('DEV_COMMAND_ACTION_NOT_ALLOWED: ' + action)")) throw new Error('Dev command allowlist default deny missing');
 if (!devCommandRunner.includes("reason: 'DUPLICATE_COMMAND_ID'")) throw new Error('Dev command duplicate-ID fail-close missing');
@@ -493,4 +585,3 @@ for (const file of [`${root}/.clasprc.json`,`${root}/.clasp.json`,`${root}/.clas
   if (fs.existsSync(file)) throw new Error(`sensitive clasp config must not be committed: ${file}`);
 }
 console.log('bootstrap validation PASS');
-
