@@ -271,6 +271,21 @@ if (/\.setValue\s*\(|\.setValues\s*\(|appendRow\s*\(|deleteRow\s*\(|Sheets\.Spre
       throw new Error('DEV consumer expiry during metadata fence did not fail closed');
     }
     context.Date = RealDate;
+    context.Drive.Files.get = () => {throw new Error('metadata unavailable');};
+    const unavailable = context.devHealthConsumeOne_(config,envelope,'INTEGRATION-CAPTURE');
+    if (unavailable.path !== 'FALLBACK' || unavailable.fallback.status !== 'FAIL_CLOSED' ||
+        unavailable.fallback.error_code !== 'CONSUMER_SOURCE_METADATA_UNAVAILABLE') {
+      throw new Error('DEV consumer inaccessible source did not terminalize fail closed');
+    }
+    context.Drive.Files.get = id => {
+      if (id !== config.spreadsheetId) throw new Error('one source unavailable');
+      return meta;
+    };
+    const isolated = context.runRuntimeHealthCacheCapture('INTEGRATION-CAPTURE');
+    if (isolated.observations.SCHEDULED_WORK.status !== 'FAIL_CLOSED' ||
+        isolated.observations.SITE_RESEARCH.status !== 'COLLECTED') {
+      throw new Error('DEV consumer source-local failure suppressed the other source');
+    }
     context.Drive.Files.get = () => meta;
     const scheduledConfig = context.v03RuntimeHealthConfigByKey_('SCHEDULED_WORK');
     const scheduledSnapshot = context.v03RuntimeHealthFixture_('SCHEDULED_WORK');

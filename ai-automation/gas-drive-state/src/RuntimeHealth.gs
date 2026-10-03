@@ -1507,9 +1507,15 @@ function devHealthScope_(config) {
 
 function devHealthMetadata_(config, evidence) {
   evidence.drive_metadata_reads++;
-  const meta = Drive.Files.get(config.spreadsheetId, {
-    fields:'id,name,mimeType,modifiedTime,version,trashed'
-  });
+  let meta;
+  try {
+    meta = Drive.Files.get(config.spreadsheetId, {
+      fields:'id,name,mimeType,modifiedTime,version,trashed'
+    });
+  } catch (e) {
+    throw v03Error_('CONSUMER_SOURCE_METADATA_UNAVAILABLE',
+      'exact source metadata unavailable: ' + String(e && e.message ? e.message : e));
+  }
   v03AssertRuntimeMetadataEvidence_(config, meta, 'consumer');
   if (meta.trashed === true ||
       meta.name !== config.expectedIdentity ||
