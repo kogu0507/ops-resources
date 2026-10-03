@@ -2,6 +2,33 @@
 
 Google Drive is the project authority. This repository is the technical source/deployment substrate for the bounded Drive-state collector.
 
+## DEV consumer value proof — MC-DCV-M2-v0.1
+
+This is a DEV experiment, not Production activation or a savings claim.
+The existing command runner supports three finite actions:
+
+- `RUNTIME_HEALTH_CONSUMER_FIXTURE_ACCEPTANCE`: 54 validity cases for both runtime configurations.
+- `RUNTIME_HEALTH_CACHE_CAPTURE`: bounded, coherent read-only observations; cache envelopes are stored in this command's existing `result_json`.
+- `RUNTIME_HEALTH_CONSUMER_DEV_PROOF`: reads the latest unique DONE capture from the existing COMMANDS sheet, checks source/scope/schema/producer/provenance, age <= 5 minutes and current monotonic Drive version, and skips only covered structural reads. Every disqualifying condition takes bounded source fallback.
+
+Cache lookup is capped at 1000 command rows and fails closed on ambiguous/duplicate/malformed evidence.
+No new Sheet, trigger, account, scope, monitor or storage mechanism is created.
+Source runtimes remain read-only; their abnormalities are reported, never repaired.
+
+Returned read evidence separates cache lookup, metadata/extent checks and actual
+attempted source range reads/cells. GAS read operations are not represented as
+ChatGPT provider calls. Caller-side command submission, result retrieval, later
+checks, raw baseline calls and model-tool roundtrips must also be measured.
+An OBSERVATION/DONE result does not mean net benefit or Milestone acceptance.
+Expired results at the caller cannot authorize skip. Semantic interpretation,
+current-authority routing and dispatcher ownership/eligibility/recovery remain
+outside this consumer.
+
+The five-minute runner cadence may erase the consumer's five-minute validity
+window and increase model-tool roundtrips. Preserve that result as STOP /
+NEEDS_EVIDENCE when observed; do not change TTL, trigger cadence, auth or add
+a direct-call surface to force a positive result.
+
 ## Current status — 2026-09-20
 
 **Operational baseline: Dev verified; Production source materialized and first manual Production collection verified; recurring trigger not yet enabled.**

@@ -204,10 +204,11 @@ function v03RuntimeHealthConfigForSource_(source) {
   return config;
 }
 
-function v03ReadRuntimeHealthSnapshot_(config, beforeMeta) {
+function v03ReadRuntimeHealthSnapshot_(config, beforeMeta, readEvidence) {
   const ss = SpreadsheetApp.openById(config.spreadsheetId);
-  const first = v03ReadRuntimeTabsOnce_(ss, config, null);
-  const second = v03ReadRuntimeTabsOnce_(ss, config, first);
+  const first = v03ReadRuntimeTabsOnce_(ss, config, null, readEvidence);
+  const second = v03ReadRuntimeTabsOnce_(ss, config, first, readEvidence);
+  if (readEvidence) readEvidence.drive_metadata_reads++;
   const afterMeta = Drive.Files.get(String(config.spreadsheetId), {
     fields: 'id,name,mimeType,modifiedTime,version,trashed'
   });
@@ -222,7 +223,7 @@ function v03ReadRuntimeHealthSnapshot_(config, beforeMeta) {
   };
 }
 
-function v03ReadRuntimeTabsOnce_(ss, config, previousTabs) {
+function v03ReadRuntimeTabsOnce_(ss, config, previousTabs, readEvidence) {
   const tabs = {};
 
   Object.keys(config.tabs).forEach(tabName => {
@@ -234,6 +235,7 @@ function v03ReadRuntimeTabsOnce_(ss, config, previousTabs) {
 
     const lastRow = sheet.getLastRow();
     const lastColumn = sheet.getLastColumn();
+    if (readEvidence) readEvidence.extent_checks += 2;
     const prior = previousTabs && previousTabs[tabName];
 
     if (prior &&
@@ -263,6 +265,10 @@ function v03ReadRuntimeTabsOnce_(ss, config, previousTabs) {
       );
     }
 
+    if (readEvidence) {
+      readEvidence.raw_ranges.push(tabName + '!A1:' + String.fromCharCode(64 + tabConfig.headers.length) + lastRow);
+      readEvidence.raw_cells += lastRow * tabConfig.headers.length;
+    }
     const values = sheet.getRange(1, 1, lastRow, tabConfig.headers.length).getDisplayValues();
     tabs[tabName] = {
       lastRow: lastRow,
@@ -1474,4 +1480,310 @@ function v03RuntimeExpectCode_(fn, code, message) {
 
 function v03RuntimeAssert_(condition, message) {
   if (!condition) throw new Error('RUNTIME HEALTH ACCEPTANCE FAIL: ' + message);
+}
+
+/**
+ * MC-DCV-M2-v0.1 — DEV consumer only. No Production consumer is installed.
+ * Cache envelopes live in the existing COMMANDS result_json, not a new store.
+ * A DONE capture is historical evidence; every consumption rechecks validity.
+ */
+const DEV_HEALTH_CONSUMER = Object.freeze({
+  VERSION: 'dev-health-consumer-v0.1',
+  CONTRACT: 'MC-DCV-M2-v0.1',
+  MAX_AGE_MS: 300000,
+  MAX_COMMAND_ROWS: 1000,
+  MAX_RESULT_CHARS: 45000
+});
+
+function devHealthReadEvidence_() {
+  return {raw_ranges:[], raw_cells:0, drive_metadata_reads:0, extent_checks:0};
+}
+
+function devHealthScope_(config) {
+  return JSON.stringify({
+    selector:config.selector, tabs:config.tabs, control:config.controlExpectations
+  });
+}
+
+function devHealthMetadata_(config, evidence) {
+  evidence.drive_metadata_reads++;
+  const meta = Drive.Files.get(config.spreadsheetId, {
+    fields:'id,name,mimeType,modifiedTime,version,trashed'
+  });
+  v03AssertRuntimeMetadataEvidence_(config, meta, 'consumer');
+  if (meta.trashed === true ||
+      meta.name !== config.expectedIdentity ||
+      meta.mimeType !== 'application/vnd.google-apps.spreadsheet') {
+    throw v03Error_('CONSUMER_SOURCE_IDENTITY_MISMATCH', 'exact source metadata mismatch');
+  }
+  return meta;
+}
+
+function devHealthEnvelope_(config, snapshot, health, commandId, observedAt) {
+  return {
+    consumer_contract:DEV_HEALTH_CONSUMER.CONTRACT,
+    producer_version:RUNTIME_HEALTH_V01.VERSION,
+    source_id:config.spreadsheetId, runtime_key:config.runtimeKey,
+    selector:config.selector, scope_schema:devHealthScope_(config),
+    source_version_token:snapshot.sourceVersionToken,
+    observed_at:observedAt, collection_status:'SUCCESS',
+    health:health,
+    provenance:{
+      script_id:COLLECTOR_V03.DEV_SCRIPT_ID,
+      command_id:commandId, action:'RUNTIME_HEALTH_CACHE_CAPTURE'
+    }
+  };
+}
+
+function devHealthCaptureOne_(config, commandId) {
+  const evidence = devHealthReadEvidence_();
+  const observedAt = new Date().toISOString();
+  try {
+    const before = devHealthMetadata_(config, evidence);
+    const snapshot = v03ReadRuntimeHealthSnapshot_(config, before, evidence);
+    const health = v03EvaluateRuntimeHealthSnapshot_(config.runtimeKey, snapshot);
+    return {
+      status:'COLLECTED',
+      envelope:devHealthEnvelope_(config, snapshot, health, commandId, observedAt),
+      read_evidence:evidence
+    };
+  } catch (e) {
+    if (!e || !e.v03code) throw e;
+    return {
+      status:'FAIL_CLOSED', error_code:e.v03code,
+      error:String(e.message || e), envelope:null, read_evidence:evidence
+    };
+  }
+}
+
+function devHealthBoundResult_(result) {
+  if (JSON.stringify(result).length > DEV_HEALTH_CONSUMER.MAX_RESULT_CHARS) {
+    throw new Error('CONSUMER_RESULT_SIZE_LIMIT');
+  }
+  return result;
+}
+
+function runRuntimeHealthCacheCapture(commandId) {
+  requireDevRuntimeForTestMutation_();
+  if (!String(commandId || '').trim()) throw new Error('CONSUMER_COMMAND_ID_REQUIRED');
+  const observations = {};
+  ['SCHEDULED_WORK','SITE_RESEARCH'].forEach(key => {
+    observations[key] = devHealthCaptureOne_(v03RuntimeHealthConfigByKey_(key), commandId);
+  });
+  return devHealthBoundResult_({
+    status:'OBSERVATION', contract:DEV_HEALTH_CONSUMER.CONTRACT,
+    consumer_version:DEV_HEALTH_CONSUMER.VERSION,
+    producer_version:RUNTIME_HEALTH_V01.VERSION,
+    command_id:commandId, observations:observations,
+    acceptance:'Observation only; not current skip permission or net benefit.'
+  });
+}
+
+function devHealthValidity_(config, envelope, nowMs, expectedCommandId) {
+  const reject = reason => ({decision:'FALLBACK', reason:reason});
+  if (!envelope || typeof envelope !== 'object') return reject('CACHE_MISSING');
+  if (envelope.consumer_contract !== DEV_HEALTH_CONSUMER.CONTRACT ||
+      envelope.producer_version !== RUNTIME_HEALTH_V01.VERSION) return reject('VERSION_MISMATCH');
+  if (envelope.source_id !== config.spreadsheetId ||
+      envelope.runtime_key !== config.runtimeKey ||
+      envelope.selector !== config.selector) return reject('SOURCE_MISMATCH');
+  if (envelope.scope_schema !== devHealthScope_(config)) return reject('SCOPE_SCHEMA_MISMATCH');
+  const p = envelope.provenance;
+  if (!p || !expectedCommandId || p.command_id !== expectedCommandId ||
+      p.script_id !== COLLECTOR_V03.DEV_SCRIPT_ID ||
+      p.action !== 'RUNTIME_HEALTH_CACHE_CAPTURE') return reject('PROVENANCE_MISSING_OR_MISMATCH');
+  const token = String(envelope.source_version_token || '');
+  const prefix = config.spreadsheetId + '|modified=';
+  const versionAt = token.lastIndexOf('|version=');
+  if (!token.startsWith(prefix) || versionAt <= prefix.length ||
+      !/^[1-9][0-9]*$/.test(token.slice(versionAt + 9)) ||
+      !Number.isFinite(Date.parse(token.slice(prefix.length, versionAt)))) {
+    return reject('SOURCE_VERSION_MISSING');
+  }
+  const observed = typeof envelope.observed_at === 'string' ? Date.parse(envelope.observed_at) : NaN;
+  if (!Number.isFinite(nowMs) || !Number.isFinite(observed) || observed > nowMs) {
+    return reject('CLOCK_UNKNOWN_OR_FUTURE');
+  }
+  if (nowMs - observed > DEV_HEALTH_CONSUMER.MAX_AGE_MS) return reject('STALE');
+  const h = envelope.health;
+  if (envelope.collection_status !== 'SUCCESS' || !h ||
+      h.healthy !== true || h.coverage_complete !== true) return reject('ABNORMAL_OR_UNKNOWN');
+  const names = Object.keys(config.tabs);
+  if (!h.coverage || JSON.stringify(Object.keys(h.coverage).sort()) !== JSON.stringify(names.slice().sort())) {
+    return reject('INCOMPLETE_COVERAGE');
+  }
+  for (const name of names) {
+    const c = h.coverage[name], t = config.tabs[name];
+    if (!c || c.complete !== true || c.row_bound !== t.maxRows ||
+        !Number.isInteger(c.scanned_rows) || c.scanned_rows < 1 || c.scanned_rows > t.maxRows ||
+        c.data_rows !== c.scanned_rows - 1 || c.scanned_columns !== t.headers.length) {
+      return reject('INCOMPLETE_COVERAGE');
+    }
+  }
+  if (!h.metrics || !Number.isInteger(h.metrics.queue_rows) || h.metrics.queue_rows < 0 ||
+      !Array.isArray(h.issues) || h.issues.length !== 0 || h.truncated_issues !== false) {
+    return reject('HEALTH_EVIDENCE_INCONSISTENT');
+  }
+  const zeroMetrics = config.runtimeKey === 'SCHEDULED_WORK'
+    ? ['duplicate_job_ids','duplicate_dedupe_keys_noncancelled',
+       'malformed_inflight_rows','concurrent_inflight_rows','terminal_validation_mismatches',
+       'invalid_queue_rows','unknown_status_rows','queue_template_mismatches','template_registry_issues']
+    : ['duplicate_item_ids','duplicate_queue_orders','working_count','ready_required_field_gaps',
+       'done_result_evidence_gaps','invalid_queue_rows','unknown_status_rows'];
+  if (zeroMetrics.some(key => h.metrics[key] !== 0)) return reject('HEALTH_EVIDENCE_INCONSISTENT');
+  if (config.runtimeKey === 'SCHEDULED_WORK' &&
+      (!Number.isInteger(h.metrics.inflight_count) || h.metrics.inflight_count < 0 || h.metrics.inflight_count > 1)) {
+    return reject('HEALTH_EVIDENCE_INCONSISTENT');
+  }
+  return {decision:'ELIGIBLE', reason:'BOUND_COMPLETE_HEALTHY_CURRENT_CANDIDATE'};
+}
+
+function devHealthConsumeOne_(config, envelope, expectedCommandId) {
+  const evidence = devHealthReadEvidence_();
+  let validity = devHealthValidity_(config, envelope, Date.now(), expectedCommandId);
+  if (validity.decision === 'ELIGIBLE') {
+    try {
+      const before = devHealthMetadata_(config, evidence);
+      if (v03RuntimeSourceVersionToken_(before) !== envelope.source_version_token) {
+        validity = {decision:'FALLBACK', reason:'SOURCE_CHANGED'};
+      } else {
+        const after = devHealthMetadata_(config, evidence);
+        if (v03RuntimeSourceVersionToken_(after) !== envelope.source_version_token) {
+          validity = {decision:'FALLBACK', reason:'SOURCE_CHANGED_DURING_VALIDATION'};
+        } else {
+          validity = devHealthValidity_(config, envelope, Date.now(), expectedCommandId);
+          if (validity.decision === 'ELIGIBLE') {
+            return {
+              path:'SKIP', source_id:config.spreadsheetId, selector:config.selector,
+              source_version_token:envelope.source_version_token,
+              observed_at:envelope.observed_at, validated_at:new Date().toISOString(),
+              expires_at:new Date(Date.parse(envelope.observed_at) + DEV_HEALTH_CONSUMER.MAX_AGE_MS).toISOString(),
+              health:envelope.health, read_evidence:evidence,
+              authority:'point-in-time structural evidence; not dispatcher permission'
+            };
+          }
+        }
+      }
+    } catch (e) {
+      validity = {decision:'FALLBACK', reason:'VERSION_VALIDATION_FAILED'};
+    }
+  }
+  const fallback = devHealthCaptureOne_(config, expectedCommandId || 'FALLBACK-ONLY');
+  return {
+    path:'FALLBACK', reason:validity.reason, source_id:config.spreadsheetId,
+    cache_validation_reads:evidence, fallback:fallback,
+    authority:'bounded source observation; no source repair or dispatch decision'
+  };
+}
+
+function devHealthLookupCapture_() {
+  const sheet = devCommandSheet_();
+  devCommandAssertHeader_(sheet);
+  const lastRow = sheet.getLastRow();
+  if (lastRow > DEV_HEALTH_CONSUMER.MAX_COMMAND_ROWS ||
+      sheet.getLastColumn() !== DEV_COMMAND_RUNNER.header.length) {
+    throw new Error('CONSUMER_CACHE_LOOKUP_BOUND_OR_SCHEMA');
+  }
+  if (lastRow < 2) return {command_id:'', observations:{}, lookup_cells:0};
+  const rows = sheet.getRange(2, 1, lastRow - 1, DEV_COMMAND_RUNNER.header.length).getValues();
+  if (devCommandFindDuplicateIds_(rows).length) throw new Error('CONSUMER_DUPLICATE_COMMAND_ID');
+  const candidates = rows.filter(row =>
+    String(row[1]) === 'RUNTIME_HEALTH_CACHE_CAPTURE' && String(row[3]) === 'DONE'
+  ).map(row => ({row:row, finished:Date.parse(String(row[5]))}));
+  if (!candidates.length) return {command_id:'', observations:{}, lookup_cells:rows.length * 9};
+  if (candidates.some(c => !Number.isFinite(c.finished))) throw new Error('CONSUMER_CACHE_TIME_UNKNOWN');
+  candidates.sort((a,b) => b.finished - a.finished);
+  if (candidates.length > 1 && candidates[0].finished === candidates[1].finished) {
+    throw new Error('CONSUMER_CACHE_AMBIGUOUS');
+  }
+  const row = candidates[0].row;
+  let parsed;
+  try { parsed = JSON.parse(String(row[6])); } catch (e) { throw new Error('CONSUMER_CACHE_MALFORMED'); }
+  if (!parsed || parsed.ok !== true || parsed.action !== 'RUNTIME_HEALTH_CACHE_CAPTURE' ||
+      !parsed.result || parsed.result.contract !== DEV_HEALTH_CONSUMER.CONTRACT ||
+      parsed.result.command_id !== String(row[0])) throw new Error('CONSUMER_CACHE_PROVENANCE');
+  return {command_id:String(row[0]), observations:parsed.result.observations || {}, lookup_cells:rows.length * 9};
+}
+
+function runRuntimeHealthConsumerDevProof(commandId) {
+  requireDevRuntimeForTestMutation_();
+  if (!String(commandId || '').trim()) throw new Error('CONSUMER_COMMAND_ID_REQUIRED');
+  let cache;
+  try {
+    cache = devHealthLookupCapture_();
+  } catch (e) {
+    cache = {command_id:'', observations:{}, lookup_cells:null, error:String(e.message || e)};
+  }
+  const outputs = {};
+  ['SCHEDULED_WORK','SITE_RESEARCH'].forEach(key => {
+    const observed = cache.observations[key];
+    outputs[key] = devHealthConsumeOne_(
+      v03RuntimeHealthConfigByKey_(key), observed && observed.envelope, cache.command_id
+    );
+  });
+  return devHealthBoundResult_({
+    status:'OBSERVATION', contract:DEV_HEALTH_CONSUMER.CONTRACT,
+    consumer_version:DEV_HEALTH_CONSUMER.VERSION, command_id:commandId,
+    cache_command_id:cache.command_id, cache_lookup_cells:cache.lookup_cells,
+    cache_error:cache.error || '', outputs:outputs,
+    net_benefit:'NOT_DETERMINED — count command submission/result reads/roundtrips externally',
+    uncovered_reads:'NOT_REPLACED — semantic/current-authority/dispatcher reads remain required'
+  });
+}
+
+function runRuntimeHealthConsumerFixtureAcceptance() {
+  requireDevRuntimeForTestMutation_();
+  const now = Date.parse('2026-10-03T00:00:00.000Z');
+  let cases = 0;
+  const reasons = [];
+  ['SCHEDULED_WORK','SITE_RESEARCH'].forEach(key => {
+    const config = v03RuntimeHealthConfigByKey_(key);
+    const snapshot = v03RuntimeHealthFixture_(key);
+    snapshot.sourceVersionToken = config.spreadsheetId + '|modified=2026-10-03T00:00:00.000Z|version=123';
+    const base = devHealthEnvelope_(config, snapshot,
+      v03EvaluateRuntimeHealthSnapshot_(key,snapshot), 'FIXTURE-CAPTURE', new Date(now).toISOString());
+    const check = (e, clock, expected, label) => {
+      const result = devHealthValidity_(config,e,clock,'FIXTURE-CAPTURE');
+      v03RuntimeAssert_(result.decision === expected, 'consumer ' + key + ' ' + label);
+      cases++;
+      reasons.push(key + ':' + label + ':' + result.reason);
+    };
+    check(base,now,'ELIGIBLE','healthy');
+    check(base,now + 300000,'ELIGIBLE','TTL boundary');
+    check(base,now + 300001,'FALLBACK','stale');
+    check(base,now - 1,'FALLBACK','future');
+    check(base,NaN,'FALLBACK','clock unknown');
+    check(null,now,'FALLBACK','missing');
+    const changes = [
+      e => e.collection_status = 'UNKNOWN',
+      e => e.health.healthy = false,
+      e => e.health.coverage_complete = false,
+      e => delete e.provenance,
+      e => e.provenance.command_id = 'WRONG',
+      e => e.provenance.script_id = 'PRODUCTION',
+      e => delete e.source_version_token,
+      e => e.source_version_token = config.spreadsheetId + '|modified=bad|version=123',
+      e => e.source_version_token = config.spreadsheetId + '|modified=2026-10-03T00:00:00.000Z|version=0',
+      e => e.source_id = 'WRONG',
+      e => e.selector = 'WRONG',
+      e => e.scope_schema = 'WRONG',
+      e => e.producer_version = 'WRONG',
+      e => e.observed_at = '',
+      e => delete e.health.coverage.QUEUE,
+      e => e.health.coverage.QUEUE.scanned_rows = config.tabs.QUEUE.maxRows + 1,
+      e => e.health.coverage.QUEUE.scanned_columns++,
+      e => e.health.coverage.QUEUE.complete = false,
+      e => e.health.issues.push({code:'HIDDEN'}),
+      e => e.health.metrics.queue_rows = -1,
+      e => e.health.truncated_issues = 1
+    ];
+    changes.forEach((change,index) => {
+      const e = JSON.parse(JSON.stringify(base));
+      change(e);
+      check(e,now,'FALLBACK','negative-' + index);
+    });
+  });
+  return {status:'PASS', contract:DEV_HEALTH_CONSUMER.CONTRACT,
+    consumer_version:DEV_HEALTH_CONSUMER.VERSION, cases:cases, reasons:reasons,
+    acceptance:'fixture validity only; no live read reduction claim'};
 }
