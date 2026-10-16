@@ -1,8 +1,8 @@
-# GSC + GA4 独立スナップショットGAS — Issue #26 M0/M1
+# GSC + GA4 独立スナップショットGAS — Issue #26 M0/M1・M2-DEV
 
-**状態: オフライン実装・fixture試験のみ。Google認可、API有効化、実データ取得、デプロイ、トリガー変更は未実行。**
+**状態: M1オフライン試験43件PASS。限定M2-DEVは承認済み。新規専用GAS・Sheetを準備し、接続先をUI確認しましたが、専用GASのdefault→standard Cloud project切替が不可逆なためSTOP_BOUNDARYで停止しています。collector実行は0回で、公式API取得・Sheet保存/readback・同キー再実行は未実測。** 最新の準備状況と必要な判断は [docs/M2-DEV.md](docs/M2-DEV.md) を参照してください。Google本人OAuth同意は未完了です。
 
-既存 `gas-drive-state` / Simple Runnerとは別プロジェクト。`src` の4ファイルだけが将来の新規GASへ渡すソースです。既存Script/Sheet ID、clasp設定、workflow、認証情報をコピーしません。初期設定 `liveEnabled: false` は、トークン取得・HTTP・ロック前に停止します。実行にはさらに新規専用GASの `expectedScriptId` 一致が必要です。Web配布物はなく、FTP・public_htmlミラーへの配置は不要です。
+既存 `gas-drive-state` / Simple Runnerとは別プロジェクト。`src` の4ファイルだけが新規専用GASへ反映するソースです。既存Script/Sheet ID、clasp設定、workflow、認証情報をコピーしません。初期設定 `liveEnabled: false` は、トークン取得・HTTP・ロック前に停止します。実行にはさらに新規専用GASの `expectedScriptId` 一致が必要です。Web配布物はなく、FTP・public_htmlミラーへの配置は不要です。
 
 ## ローカル検証
 
@@ -46,26 +46,28 @@ script lockは同一GAS内の競合だけを防ぎます。他GASや人間との
 
 manifestは `analytics.readonly`, `webmasters.readonly`, `spreadsheets`, `script.external_request` の4つです。source2つはreadonly。保存用 `spreadsheets` scopeはSpreadsheet単位の認可ではないため、専用DEV Sheet/限定権限の実行アカウントとexact ID/title照合を併用します。Drive scope、GAS管理scope、トリガーscopeは要求しません。トークンはScriptAppから実行時のみ取得し、コード・ログ・Git・Issueへ保存しません。エラー本文や取得データも自動ログしません。
 
-次の操作は**まだ承認されていません**。人間が範囲・対象を承認するまで停止します。
+次の操作は [2026-10-15の限定DEV承認](https://github.com/kogu0507/ops-resources/pull/27#issuecomment-6187414057) と [運用補足](https://github.com/kogu0507/ops-resources/pull/27#issuecomment-6187525064) の範囲で**承認済み**です。本人OAuth同意を除き、対象の照合・準備・手動単発1回と同条件再実行1回・結果記録を自律的に進めます。承認は認証完了や実測PASSを意味しません。
 
 1. 対象の1 GSCサイト/1 GA4 property、実行アカウントの既存閲覧権限、GA4計測対象/プロパティtimezoneを確認する。IDを推定しない。
 2. 新規独立DEV GASと専用DEV Spreadsheet/tab（初期空、最低3列、必要行数）を用意し、正確なID/titleを確認する。既存GAS/Sheetへ接続しない。
-3. その新規GASのCloud projectでSearch Console API、Analytics Data API、Google Sheets APIの必要な有効化を確認し、必要なら承認後に有効化する。新たな課金を有効にしない。
+3. その新規GASのCloud projectでSearch Console API、Analytics Data API、Google Sheets APIの必要な有効化を確認し、必要なら承認済みのこの対象だけで有効化する。新たな課金を有効にしない。
 4. ローカル `ai-automation/gas-site-analytics/src/{Collector.gs,GasIo.gs,Config.gs,appsscript.json}` → **承認した新規DEV Apps Scriptプロジェクトの同名ファイル**へ反映する。既存clasp設定/デプロイ先は使わない。FTPは該当しない。
 5. Configにexact IDs、sourceごとの確認済終了日を設定し、承認された単発試験についてのみ `liveEnabled: true` にする。初回OAuthは人間が要求scopeを確認して許可する。GSC/GA4 read + DEV Sheetへのwrite範囲が承認対象。
-6. 手動 `runSiteAnalytics` を1回実行し、5件のmetadata、期間/timezone/coverage、公式UIとの同条件照合、readback成功を確認する。同windowを再実行する試験も明示的に範囲へ含める。実機証拠は機密を除いて記録する。トリガーは設定しない。
+6. 手動 `runSiteAnalytics` を1回実行し、5件のmetadata、期間/timezone/coverage、公式UIとの同条件照合、readback成功を確認する。同window・意味キーで手動再実行を1回行い、重複しない置換を確認する。古い行の消去は実際に減少が観測された場合だけ実測証拠とし、減少がなければ未観測と記録する。実機証拠は機密を除いて記録する。トリガーは設定しない。
+
+既承認DEV内の可逆で局所的な修正・回帰試験は運用補足の範囲で進めます。本番、既存GAS/Sheet/トリガー、workflow/clasp変更、課金、外部権限やアカウントの拡張、PRマージは承認対象外です。本人操作が必要なら、確認済み事項を再依頼せず、画面入口・対象・期待結果・戻り報告を一通にまとめます。
 
 安全な復帰: 失敗時は `liveEnabled:false` に戻して停止。専用DEV tabのバックアップが必要なら書込前に人間が保存する。UNKNOWNは既存内容を確認するまで再実行しない。検証済バックアップの復元・データ削除・本番移行は別途承認する。既存 `gas-drive-state` は影響範囲外。Production/trigger運用設計は次のmilestoneです。
 
 ## 次の実装用チャットへ渡すプロンプト
 
 ```text
-kogu0507/ops-resources Issue #26 のM1成果をレビューしてください。
+kogu0507/ops-resources Issue #26 / PR #27 の承認済みM2-DEVを継続してください。
 CODEX-HANDOFF.mdとDrive CURRENT/Knowledge Registry、MEASUREMENT-FACTS-SPEC.md、DESIGN-NOTES IV/Vをfresh readし、ai-automation/gas-site-analytics/README.mdとdocs/M0-AUDIT.mdを確認してください。
-まずコードとオフラインテスト（node --test ai-automation/gas-site-analytics/test/collector.test.mjs）を確認してください。
+PR #27 の承認コメント6187414057・運用補足6187525064をfresh readし、docs/M2-DEV.mdの確認済み事項と未実測を区別してください。まず現在のDEV資産・設定・実行回数を照合し、既存成果を重複作成しないでください。コード変更が必要ならオフラインテスト（node --test ai-automation/gas-site-analytics/test/collector.test.mjs）で再検証してください。
 既存gas-drive-state、Simple Runner、workflow、clasp、認証情報、既存Script/Sheet/triggerは変更しないでください。
-認可・API有効化・新規GASへの反映・実データアクセス・DEV Sheet書込・再実行は、上記READMEの具体的対象/範囲を人間が承認した証拠を確認するまで停止してください。承認がなければ必要な対象確認と手順の具体化まで進めて報告してください。
-承認後も専用DEV単発試験の範囲だけを実施し、readback/同キー冪等性/metadataを検証・引継ぎ記録してください。本番/定期trigger/課金は対象外です。
+限定DEVの準備・必要API有効化・対象4ファイル反映・単発取得1回と同キー再実行1回は承認済みです。Cloud default→standardの不可逆切替は別承認の証拠を確認し、未承認なら切替前に停止してください。OAuth同意そのものは本人操作を待ち、必要な操作を一通にまとめてください。エラー/書込UNKNOWNはSheet確認前に独断で再試行しないでください。
+承認範囲でreadback/同キー冪等性/metadataを検証し、PRとDrive currentへ証拠・制約・次の作業を記録してください。本番/定期trigger/課金/PRマージは対象外です。M2 PASS後はM3提案とpreflightまでまとめ、本番操作は実施しないでください。
 ```
 
 ## 参照（2026-10-15に公式仕様確認）
