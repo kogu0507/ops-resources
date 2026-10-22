@@ -1,0 +1,6 @@
+{
+  "profile": {"schemaVersion":"json-diff-profile/1","profileVersion":"1","recordsPath":"/items","idKey":"id","ignorePaths":["/capturedAt"]},
+  "before": {"items":[{"id":"A","name":"旧","capturedAt":"old"},{"id":"B","name":"B","capturedAt":"old"},{"id":"C","name":"C"}]},
+  "after": {"items":[{"id":"C","name":"C"},{"id":"A","name":"新","capturedAt":"new"},{"id":"D","name":"D","capturedAt":"new"}]},
+  "expected": {"ok":true,"result":{"schemaVersion":"json-diff-result/1","profileIdentity":"{\"schemaVersion\":\"json-diff-profile/1\",\"profileVersion\":\"1\",\"recordsPath\":\"/items\",\"idKey\":\"id\",\"ignorePaths\":[\"/capturedAt\"]}","status":"CHANGED","counts":{"beforeRecords":3,"afterRecords":3,"addedRecords":1,"removedRecords":1,"modifiedRecords":1,"unchangedRecords":1,"changeEntries":3},"changes":[{"category":"FIELD","recordId":"A","path":"/name","kind":"REPLACED","before":{"present":true,"value":"旧"},"after":{"present":true,"value":"新"}},{"category":"RECORD","recordId":"B","path":"","kind":"REMOVED","before":{"present":true,"value":{"id":"B","name":"B"}},"after":{"present":false}},{"category":"RECORD","recordId":"D","path":"","kind":"ADDED","before":{"present":false},"after":{"present":true,"value":{"id":"D","name":"D"}}}]}}
+}
