@@ -1,0 +1,130 @@
+{
+  "gscTotal": {
+    "responseAggregationType": "byProperty",
+    "rows": [
+      {
+        "clicks": 8,
+        "impressions": 100,
+        "ctr": 0.08,
+        "position": 4.5
+      }
+    ]
+  },
+  "gscQuery": {
+    "responseAggregationType": "byProperty",
+    "rows": [
+      {
+        "keys": [
+          "music"
+        ],
+        "clicks": 3,
+        "impressions": 40,
+        "ctr": 0.075,
+        "position": 5
+      }
+    ]
+  },
+  "gscPage": {
+    "responseAggregationType": "byPage",
+    "rows": [
+      {
+        "keys": [
+          "https://example.test/"
+        ],
+        "clicks": 7,
+        "impressions": 90,
+        "ctr": 0.0777777778,
+        "position": 4
+      }
+    ]
+  },
+  "ga4Pages": {
+    "dimensionHeaders": [
+      {
+        "name": "pagePathPlusQueryString"
+      },
+      {
+        "name": "pageTitle"
+      }
+    ],
+    "metricHeaders": [
+      {
+        "type": "TYPE_INTEGER",
+        "name": "screenPageViews"
+      },
+      {
+        "type": "TYPE_INTEGER",
+        "name": "activeUsers"
+      }
+    ],
+    "rows": [
+      {
+        "dimensionValues": [
+          {
+            "value": "/"
+          },
+          {
+            "value": "Home"
+          }
+        ],
+        "metricValues": [
+          {
+            "value": "42"
+          },
+          {
+            "value": "8"
+          }
+        ]
+      }
+    ],
+    "rowCount": 1,
+    "metadata": {
+      "timeZone": "Asia/Tokyo",
+      "dataLossFromOtherRow": false,
+      "subjectToThresholding": true
+    }
+  },
+  "ga4Acquisition": {
+    "dimensionHeaders": [
+      {
+        "name": "sessionSource"
+      },
+      {
+        "name": "sessionMedium"
+      }
+    ],
+    "metricHeaders": [
+      {
+        "name": "sessions",
+        "type": "TYPE_INTEGER"
+      }
+    ],
+    "rows": [
+      {
+        "dimensionValues": [
+          {
+            "value": "google"
+          },
+          {
+            "value": "organic"
+          }
+        ],
+        "metricValues": [
+          {
+            "value": "12"
+          }
+        ]
+      }
+    ],
+    "rowCount": 1,
+    "metadata": {
+      "timeZone": "Asia/Tokyo",
+      "samplingMetadatas": [
+        {
+          "samplesReadCount": "100",
+          "samplingSpaceSize": "1000"
+        }
+      ]
+    }
+  }
+}
